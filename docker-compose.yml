@@ -21,6 +21,23 @@ services:
     networks:
       - medpho_net
 
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: medpho_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@medpho.local
+      PGADMIN_DEFAULT_PASSWORD: AdminPass123!
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    restart: unless-stopped
+    networks:
+      - medpho_net
+    
+
   metabase:
     image: metabase/metabase:latest
     container_name: medpho_metabase
@@ -41,10 +58,13 @@ services:
     restart: unless-stopped
     networks:
       - medpho_net
+  
+      
 
 volumes:
   postgres_data:
   metabase_data:
+  pgadmin_data:
 
 networks:
   medpho_net:
