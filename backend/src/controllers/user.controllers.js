@@ -4,6 +4,7 @@ import asyncHandler from "../utils/asynchandler.utils.js"
 import { process_phone_no, processString } from "../helper/preprocess_data.helper.js"
 import { pool } from "../DB/db.js"
 import readCsvFile from "../helper/read_csv.helper.js"
+import fs from "fs"
 
 export default class userController {
     createUser = asyncHandler(async (req, res, next) => {
@@ -58,6 +59,7 @@ export default class userController {
             );
             newUsers.push(newUser.rows);
         }
+        fs.unlink(file.path);
         res.status(401).json(400,new apiResponse(400,newUsers));
     });
 
