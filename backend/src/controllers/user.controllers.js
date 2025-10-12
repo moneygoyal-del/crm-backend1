@@ -59,8 +59,16 @@ export default class userController {
             );
             newUsers.push(newUser.rows);
         }
-        fs.unlink(file.path);
-        res.status(401).json(400,new apiResponse(400,newUsers));
+
+        fs.unlink(file.path, (err) => {
+            if (err) {
+                console.error('Error deleting file:', err);
+            } else {
+                console.log('File deleted successfully:', file.path);
+            }
+        });
+
+        res.status(201).json(new apiResponse(201, newUsers, "NDMs created successfully"));
     });
 
 
