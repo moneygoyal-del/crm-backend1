@@ -1,44 +1,45 @@
 /**
- 
- * @param {string} fullName - The full name of the doctor.
+
+ * @param {string} fullName - The full name of the doctor from the CSV.
  * @returns {{firstName: string, lastName: string}}
  */
 function processDoctorName(fullName) {
-    
-    console.log(`\n--- Processing Name ---`);
     if (typeof fullName !== 'string' || !fullName) {
-        console.log(`Input: "${fullName}" -> Invalid. Returning empty.`);
         return { firstName: '', lastName: '' };
     }
-    console.log(`Input Name: "${fullName}"`);
-   
 
-    let nameParts = fullName.trim().split(/\s+/);
+    let cleanedName = fullName.trim();
+    const prefixes = ['dr.', 'dr'];
 
-    
-    const firstPart = nameParts[0].toLowerCase();
-    if (firstPart === 'dr' || firstPart === 'dr.') {
-        nameParts.shift(); 
-        console.log(`Prefix found and removed.`);
+    let prefixFound = true;
+    while (prefixFound) {
+        prefixFound = false;
+        for (const prefix of prefixes) {
+            if (cleanedName.toLowerCase().startsWith(prefix)) {
+                // Remove the prefix, accounting for its length
+                cleanedName = cleanedName.substring(prefix.length).trim();
+                prefixFound = true; // Set to true to re-run the loop
+                break; // Exit the for-loop and restart the while-loop
+            }
+        }
     }
 
-  
-    const cleanedName = nameParts.join(' ');
-    const finalParts = cleanedName.trim().split(/\s+/);
+    // Split the fully cleaned name into parts
+    const nameParts = cleanedName.split(/\s+/);
 
     let firstName = '';
     let lastName = '';
 
-    if (finalParts.length === 1) {
-        firstName = finalParts[0].toLowerCase();
-    } else if (finalParts.length > 1) {
-       
-        firstName = finalParts[0].toLowerCase();
-       
-        lastName = finalParts.slice(1).join(' ').toLowerCase();
+    if (nameParts.length > 0) {
+        // The first word of the cleaned name is the first name
+        firstName = nameParts[0].toLowerCase();
+        
+        // All subsequent words are joined to form the last name
+        if (nameParts.length > 1) {
+            lastName = nameParts.slice(1).join(' ').toLowerCase();
+        }
     }
 
-    console.log(`Output -> firstName: "${firstName}", lastName: "${lastName}"`);
     return { firstName, lastName };
 }
 
