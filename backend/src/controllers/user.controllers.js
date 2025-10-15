@@ -43,6 +43,15 @@ export default class userController {
         // phone ndm_name role
         const file = req.file;
         const users = await readCsvFile(file.path);
+
+        fs.unlink(file.path, (err) => {
+            if (err) {
+                console.error('Error deleting file:', err);
+            } else {
+                console.log('File deleted successfully:', file.path);
+            }
+        });
+        
         const newUsers = [];
         const created_at = new Date();
         const updated_at = created_at;
@@ -59,14 +68,6 @@ export default class userController {
             );
             newUsers.push(newUser.rows);
         }
-
-        fs.unlink(file.path, (err) => {
-            if (err) {
-                console.error('Error deleting file:', err);
-            } else {
-                console.log('File deleted successfully:', file.path);
-            }
-        });
 
         res.status(201).json(new apiResponse(201, newUsers, "NDMs created successfully"));
     });
