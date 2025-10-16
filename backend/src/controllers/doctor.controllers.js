@@ -129,4 +129,111 @@ export default class doctorController {
             failures: failedRows
         }, "Batch processing complete."));
     });
+
+    createOnlineDoctors = asyncHandler(async (req, res, next) => {
+        const file = req.file;
+        if (!file) throw new apiError(400, "No file uploaded.");
+
+        console.log("File received:", file.path);
+
+        const doctorsCsvData = await readCsvFile(file.path);
+        console.log(`CSV data read successfully. ${doctorsCsvData.length} rows found.`);
+
+        fs.unlink(file.path, (err) => {
+            if (err) {
+                console.error('Error deleting file:', err);
+            } else {
+                console.log('File deleted successfully:', file.path);
+            }
+        });
+
+        const processedDoctors = [];
+        const updatedDoctors = [];
+        const failedRows = [];
+
+        console.log("Starting to process CSV rows...");
+
+        for (let i = 0; i < doctorsCsvData.length; i++) {
+            const row = doctorsCsvData[i];
+            const rowNumber = i + 2; // Assuming CSV has a header row
+            console.log(`[Row ${rowNumber}]: Processing...`);
+
+            try {
+                const doctorName = row[0];
+                const doctorPhoneRaw = row[1];
+                const location = row[2];
+                const ndmPhoneRaw = row[3];
+
+                console.log(`[Row ${rowNumber}]: Data - Doctor: ${doctorName}, Phone: ${doctorPhoneRaw}, NDM Phone: ${ndmPhoneRaw}`);
+
+
+                if (!doctorName || !doctorPhoneRaw || !ndmPhoneRaw) {
+                    failedRows.push({ rowNumber, reason: "Missing Doctor Name, Doctor Phone, or NDM Phone." });
+                    console.log(`[Row ${rowNumber}]: SKIPPED - Missing required data.`);
+                    continue;
+                }
+
+                const doctorPhone = process_phone_no(doctorPhoneRaw);
+                const ndmPhone = process_phone_no(ndmPhoneRaw);
+
+                if (!doctorPhone || !ndmPhone) {
+                    failedRows.push({ rowNumber, reason: "Invalid phone number format." });
+                    console.log(`[Row ${rowNumber}]: SKIPPED - Invalid phone number.`);
+                    continue;
+                }
+
+                // Find the NDM's ID from the users table
+                console.log(`[Row ${rowNumber}]: Searching for NDM with phone ${ndmPhone}.`);
+                const ndmResult = await pool.query("SELECT id FROM users WHERE phone = $1", [ndmPhone]);
+                if (ndmResult.rows.length === 0) {
+                    failedRows.push({ rowNumber, reason: `NDM with phone ${ndmPhone} not found.` });
+                    console.log(`[Row ${rowNumber}]: FAILED - NDM not found.`);
+                    continue;
+                }
+                const ndmId = ndmResult.rows[0].id;
+                console.log(`[Row ${rowNumber}]: NDM found with ID: ${ndmId}.`);
+
+                // Check if the doctor already exists
+                console.log(`[Row ${rowNumber}]: Checking if doctor with phone ${doctorPhone} exists.`);
+                const existingDoctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [doctorPhone]);
+
+                if (existingDoctor.rows.length > 0) {
+                    // Update the existing doctor's assigned_agent_id_online
+                    console.log(`[Row ${rowNumber}]: Doctor exists. Updating...`);
+                    await pool.query(
+                        "UPDATE doctors SET assigned_agent_id_online = $1, updated_at = NOW() WHERE phone = $2",
+                        [ndmId, doctorPhone]
+                    );
+                    updatedDoctors.push({ phone: doctorPhone });
+                    console.log(`[Row ${rowNumber}]: SUCCESS - Doctor updated.`);
+                } else {
+                    // Insert a new doctor record
+                    console.log(`[Row ${rowNumber}]: Doctor does not exist. Creating...`);
+                    const { firstName, lastName } = processDoctorName(doctorName);
+                    const fullName = `${firstName} ${lastName}`.trim();
+                    const locationJson = JSON.stringify({ locality: location });
+
+                    await pool.query(
+                        `INSERT INTO doctors (first_name, phone, location, assigned_agent_id_online) VALUES ($1, $2, $3, $4)`,
+                        [fullName, doctorPhone, locationJson, ndmId]
+                    );
+                    processedDoctors.push({ phone: doctorPhone });
+                    console.log(`[Row ${rowNumber}]: SUCCESS - Doctor created.`);
+                }
+
+            } catch (error) {
+                failedRows.push({ rowNumber, reason: error.message });
+                console.error(`[Row ${rowNumber}]: FAILED with error: ${error.message}`);
+            }
+        }
+        
+        console.log("\n--- Doctor Assignment Processing Complete ---");
+
+        res.status(201).json(new apiResponse(201, {
+            newly_created_count: processedDoctors.length,
+            updated_count: updatedDoctors.length,
+            failed_count: failedRows.length,
+            failures: failedRows
+        }, "Doctor assignment processing complete."));
+    });
 }

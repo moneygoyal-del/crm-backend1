@@ -1,7 +1,6 @@
 CREATE TABLE doctors (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) ,
     phone VARCHAR(20) UNIQUE NOT NULL,
     location JSONB, -- GPS coordinates and address
     gps_location_link TEXT, -- GPS location link for the doctor
