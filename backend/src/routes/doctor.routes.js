@@ -6,7 +6,7 @@ const router = Router();
 const DoctorController = new doctorController();
 
 
-router.route("/createBatch").post(upload.single('doctors'), DoctorController.createDoctorBatch);
+router.route("/createBatchDoctorsandMeetings").post(upload.single('doctors'), DoctorController.createDoctorBatchAndMeetings);
 
 // router.route("create").post();
 // router.route("delete").delete();
