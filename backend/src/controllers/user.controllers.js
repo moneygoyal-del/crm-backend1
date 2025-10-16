@@ -53,7 +53,7 @@ export default class userController {
         });
         
         const newUsers = [];
-        const created_at = new Date();
+        const created_at = new Date().toISOString();
         const updated_at = created_at;
         for (const ind in users) {
             const row = users[ind];
