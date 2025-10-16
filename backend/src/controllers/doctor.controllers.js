@@ -132,9 +132,29 @@ export default class doctorController {
 
     createOnlineDoctors = asyncHandler(async (req, res, next) => {
         const file = req.file;
+        const ndmPhoneRaw = req.params.ndmPhone;
+
         if (!file) throw new apiError(400, "No file uploaded.");
+        if (!ndmPhoneRaw) throw new apiError(400, "NDM phone number is required.");
 
         console.log("File received:", file.path);
+        console.log("NDM Phone:", ndmPhoneRaw);
+
+
+        const ndmPhone = process_phone_no(ndmPhoneRaw);
+        if (!ndmPhone) {
+            throw new apiError(400, "Invalid NDM phone number format.");
+        }
+
+        // Find the NDM's ID from the users table once
+        console.log(`Searching for NDM with phone ${ndmPhone}.`);
+        const ndmResult = await pool.query("SELECT id FROM users WHERE phone = $1", [ndmPhone]);
+        if (ndmResult.rows.length === 0) {
+            throw new apiError(404, `NDM with phone ${ndmPhone} not found.`);
+        }
+        const ndmId = ndmResult.rows[0].id;
+        console.log(`NDM found with ID: ${ndmId}.`);
+
 
         const doctorsCsvData = await readCsvFile(file.path);
         console.log(`CSV data read successfully. ${doctorsCsvData.length} rows found.`);
@@ -162,36 +182,23 @@ export default class doctorController {
                 const doctorName = row[0];
                 const doctorPhoneRaw = row[1];
                 const location = row[2];
-                const ndmPhoneRaw = row[3];
 
-                console.log(`[Row ${rowNumber}]: Data - Doctor: ${doctorName}, Phone: ${doctorPhoneRaw}, NDM Phone: ${ndmPhoneRaw}`);
+                console.log(`[Row ${rowNumber}]: Data - Doctor: ${doctorName}, Phone: ${doctorPhoneRaw}`);
 
 
-                if (!doctorName || !doctorPhoneRaw || !ndmPhoneRaw) {
-                    failedRows.push({ rowNumber, reason: "Missing Doctor Name, Doctor Phone, or NDM Phone." });
+                if (!doctorName || !doctorPhoneRaw) {
+                    failedRows.push({ rowNumber, reason: "Missing Doctor Name or Doctor Phone." });
                     console.log(`[Row ${rowNumber}]: SKIPPED - Missing required data.`);
                     continue;
                 }
 
                 const doctorPhone = process_phone_no(doctorPhoneRaw);
-                const ndmPhone = process_phone_no(ndmPhoneRaw);
 
-                if (!doctorPhone || !ndmPhone) {
+                if (!doctorPhone) {
                     failedRows.push({ rowNumber, reason: "Invalid phone number format." });
                     console.log(`[Row ${rowNumber}]: SKIPPED - Invalid phone number.`);
                     continue;
                 }
-
-                // Find the NDM's ID from the users table
-                console.log(`[Row ${rowNumber}]: Searching for NDM with phone ${ndmPhone}.`);
-                const ndmResult = await pool.query("SELECT id FROM users WHERE phone = $1", [ndmPhone]);
-                if (ndmResult.rows.length === 0) {
-                    failedRows.push({ rowNumber, reason: `NDM with phone ${ndmPhone} not found.` });
-                    console.log(`[Row ${rowNumber}]: FAILED - NDM not found.`);
-                    continue;
-                }
-                const ndmId = ndmResult.rows[0].id;
-                console.log(`[Row ${rowNumber}]: NDM found with ID: ${ndmId}.`);
 
                 // Check if the doctor already exists
                 console.log(`[Row ${rowNumber}]: Checking if doctor with phone ${doctorPhone} exists.`);
@@ -227,13 +234,13 @@ export default class doctorController {
             }
         }
         
-        console.log("\n--- Doctor Assignment Processing Complete ---");
+        console.log("\n--- Batch Processing Complete ---");
 
         res.status(201).json(new apiResponse(201, {
             newly_created_count: processedDoctors.length,
             updated_count: updatedDoctors.length,
             failed_count: failedRows.length,
             failures: failedRows
-        }, "Doctor assignment processing complete."));
+        }, "--- Batch Processing Complete ---"));
     });
 }

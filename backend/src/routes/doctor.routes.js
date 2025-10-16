@@ -7,9 +7,7 @@ const DoctorController = new doctorController();
 
 
 router.route("/createBatchDoctorsandMeetings").post(upload.single('doctors'), DoctorController.createDoctorBatchAndMeetings);
-
-// New route for assigning doctors from a CSV file
-router.route("/createOnlineDoctors").post(upload.single('doctors'), DoctorController.createOnlineDoctors);
+router.route("/createOnlineDoctors/:ndmPhone").post(upload.single('doctors'), DoctorController.createOnlineDoctors);
 
 
 // router.route("create").post();
