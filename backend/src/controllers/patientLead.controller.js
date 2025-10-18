@@ -27,7 +27,7 @@ export default class patientLeadController {
         });
 
         const data = [];
-        const failedRows = []; // Array to store failed rows for professional feedback
+        const failedRows = []; // Array to store failed rows 
 
         for(const i in patientLeads){
             const rowNumber = Number(i) + 2; // Assuming 1-indexed array from readCsvFile (after shift) + 1 for header
