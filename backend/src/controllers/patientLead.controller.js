@@ -1,4 +1,3 @@
-import apiError from "../utils/apiError.utils.js";
 import apiResponse from "../utils/apiResponse.utils.js";
 import asyncHandler from "../utils/asynchandler.utils.js";
 import { process_phone_no, parseTimestamp, processString, processTimeStamp } from "../helper/preprocess_data.helper.js";
@@ -27,10 +26,10 @@ export default class patientLeadController {
         });
 
         const data = [];
-        const failedRows = []; // Array to store failed rows 
+        const failedRows = []; 
 
         for(const i in patientLeads){
-            const rowNumber = Number(i) + 2; // Assuming 1-indexed array from readCsvFile (after shift) + 1 for header
+            const rowNumber = Number(i) + 2; 
             try {
                 const row = patientLeads[i];
                 const city = processString(row[0]); 
@@ -95,6 +94,88 @@ export default class patientLeadController {
             failed_count: failedRows.length,
             failures: failedRows
         }, "Opd Bookings batch processing complete."));
+
+    });
+
+    createDispositionLogBatchUpload = asyncHandler(async (req, res, next) => {
+        const file = req.file;
+        if (!file) throw new apiError(400, "No file uploaded.");
+
+        const dispositionLogs = await readCsvFile(file.path);
+
+        fs.unlink(file.path, (err) => {
+            if (err) {
+                console.error('Error deleting file:', err);
+            } else {
+                console.log('File deleted successfully:', file.path);
+            }
+        });
+
+        const logsCreated = [];
+        const failedRows = [];
+
+        for(const i in dispositionLogs){
+            const row = dispositionLogs[i];
+            const rowNumber = Number(i) + 2; 
+            try {
+                // CSV Index mapping (from "Patient Appointment Master Data - PatientDispositionLogs.csv" snippet):
+                const uniqueCode = row[0]// booking_reference
+                const initialDisposition = processString(row[2]); // previous_disposition
+                const nextDisposition = processString(row[3]); // new_disposition
+                const comments = row[4]; // notes
+                const timestampRaw = row[5]; // created_at
+
+                if (!uniqueCode || !nextDisposition) {
+                     throw new Error("Missing Unique Code or Next Disposition (required fields).");
+                }
+                
+                // Process timestamp
+                const created_at = processTimeStamp(timestampRaw);
+                
+                // 1. Find opd_booking_id and medical_condition from opd_bookings
+                const opdResult = await pool.query(
+                    "SELECT id, medical_condition FROM opd_bookings WHERE booking_reference = $1",
+                    [uniqueCode]
+                );
+
+                if (opdResult.rows.length === 0) {
+                    throw new Error(`OPD Booking not found for unique code: ${uniqueCode}`);
+                }
+                
+                const opd_booking_id = opdResult.rows[0].id;
+                // Map medical_condition (from opd_bookings) to disposition_reason (in logs) 
+                const disposition_reason = opdResult.rows[0].medical_condition; 
+                
+                // 2. Insert into opd_dispositions_logs
+                const newLog = await pool.query(
+                    `INSERT INTO opd_dispositions_logs (
+                        opd_booking_id, previous_disposition, new_disposition, disposition_reason, notes, created_at, updated_by_user_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7) 
+                    RETURNING id, opd_booking_id, new_disposition`,
+                    [
+                        opd_booking_id,
+                        initialDisposition, // From CSV Index 2
+                        nextDisposition, // From CSV Index 3
+                        disposition_reason, // From opd_bookings.medical_condition
+                        comments, // From CSV Index 4
+                        created_at, // From CSV Index 5
+                        null // updated_by_user_id is set to null as per request
+                    ]
+                );
+                
+                logsCreated.push(newLog.rows[0]);
+
+            } catch (error) {
+                console.error(`[Row ${rowNumber}]: FAILED with error: ${error.message}`);
+                failedRows.push({ rowNumber, reason: error.message });
+            }
+        }
+
+        res.status(201).json(new apiResponse(201, {
+            newly_created_count: logsCreated.length,
+            failed_count: failedRows.length,
+            failures: failedRows
+        }, "OPD Disposition Logs batch processing complete."));
 
     });
 
