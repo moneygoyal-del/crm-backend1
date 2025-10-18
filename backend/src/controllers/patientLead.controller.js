@@ -54,12 +54,12 @@ export default class patientLeadController {
                 if(!refree_phone_no)continue;
                 const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1",[refree_phone_no]);
                 if(doctor?.rows?.length == 0)continue;
-                const refree_id = doctor?.rows?.id;
+                const refree_id = doctor?.rows[0]?.id;
                 
                 if(!ndm_contact)continue;
                 const ndm = await pool.query("SELECT id FROM users WHERE phone = $1",[ndm_contact]);
                 if(ndm?.rows?.length == 0)continue;
-                const created_by_agent_id = ndm?.rows?.id;
+                const created_by_agent_id = ndm?.rows[0]?.id;
                 
                 
                 const created_at = new Date().toISOString(); 
