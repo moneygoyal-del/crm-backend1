@@ -1,7 +1,7 @@
 import apiError from "../utils/apiError.utils.js";
 import apiResponse from "../utils/apiResponse.utils.js";
 import asyncHandler from "../utils/asynchandler.utils.js";
-import { process_phone_no, parseTimestamp } from "../helper/preprocess_data.helper.js";
+import { process_phone_no, processTimeStamp } from "../helper/preprocess_data.helper.js";
 import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
 import fs from "fs";
@@ -42,14 +42,8 @@ export default class doctorController {
                 const phoneRaw = row[2];
                 const timeOfMeeting = row[16];
                 const date = row[17];
-                const dateParts = date.split('/');
-                const day = dateParts[0];
-                const month = dateParts[1];
-                const year = dateParts[2];
 
-                const formattedString = `${year}-${month}-${day}T${timeOfMeeting}+05:30`;
-
-                const timestamp = new Date(formattedString).toISOString();
+                const timestamp = processTimeStamp(date+" "+timeOfMeeting);
 
                 if (!FullName || !phoneRaw || !timestamp) {
                     failedRows.push({ rowNumber, reason: "Missing Name, Phone, or timestamp" });
