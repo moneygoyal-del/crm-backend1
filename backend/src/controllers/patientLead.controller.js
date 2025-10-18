@@ -27,8 +27,10 @@ export default class patientLeadController {
         });
 
         const data = [];
+        const failedRows = []; // Array to store failed rows for professional feedback
 
         for(const i in patientLeads){
+            const rowNumber = Number(i) + 2; // Assuming 1-indexed array from readCsvFile (after shift) + 1 for header
             try {
                 const row = patientLeads[i];
                 const city = processString(row[0]); 
@@ -39,7 +41,18 @@ export default class patientLeadController {
                 const patient_name = row[5];
                 const patient_phone = row[6];
                 const _age = row[7];
-                const age = _age == "N/A"?null:_age;
+                let age = null;
+                
+                // Age validation logic to handle very large or invalid values
+                if (_age !== "N/A" && _age) {
+                    const parsedAge = parseInt(_age, 10);
+                    // Check if it's a valid number and within a reasonable range (e.g., 0 to 120)
+                    if (isNaN(parsedAge) || parsedAge < 0 || parsedAge > 120) {
+                        throw new Error(`Invalid or unrealistic Age value: ${_age}. Age must be a number between 0 and 120.`);
+                    }
+                    age = parsedAge;
+                }
+                
                 const gender = row[8];
                 const medical_condition = row[9];
                 const panel = row[10];
@@ -72,11 +85,16 @@ export default class patientLeadController {
                 )
                 data.push(newOPD.rows[0]);
             } catch (error) {
-                console.log(error);
+                console.error(`[Row ${rowNumber}]: FAILED with error: ${error.message}`);
+                failedRows.push({ rowNumber: rowNumber, reason: error.message });
             }
         }
 
-        res.status(201).json(new apiResponse(201,data,"Opd Bookings successfully loaded"));
+        res.status(201).json(new apiResponse(201, {
+            newly_created_count: data.length,
+            failed_count: failedRows.length,
+            failures: failedRows
+        }, "Opd Bookings batch processing complete."));
 
     });
 
