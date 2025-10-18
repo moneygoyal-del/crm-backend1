@@ -77,7 +77,7 @@ function processTimeStamp(timeStamp) {
   const day = dateParts[0];
   const month = dateParts[1];
   const year = dateParts[2];
-  const formattedString = `${year}-${month}-${day}T${timePart?timePart:"00:00:00"}+05:30`;
+  const formattedString = `${year}-${month}-${day}T${timePart?timePart:"05:30:00"}+05:30`;
   const timestamp = new Date(formattedString).toISOString();
   return timestamp;
 }
