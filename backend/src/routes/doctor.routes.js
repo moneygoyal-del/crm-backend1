@@ -10,7 +10,7 @@ router.route("/createBatchDoctorsandMeetings").post(upload.single('doctors'), Do
 router.route("/createOnlineDoctors/:ndmPhone").post(upload.single('doctors'), DoctorController.createOnlineDoctors);
 
 
-// router.route("create").post();
+router.route("createByNdmName").post(DoctorController.createDoctorByName);
 // router.route("delete").delete();
 // router.route("update").put();
 

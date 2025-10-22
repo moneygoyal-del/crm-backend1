@@ -8,6 +8,72 @@ import fs from "fs";
 import { processDoctorName } from "../helper/process_doctor_name.helper.js";
 
 export default class doctorController {
+    createDoctorByName = asyncHandler(async (req, res, next) => {
+        const { ndm_name, doctor_name, doctor_phone_number, locality, duration_of_meeting, queries_by_the_doctor, comments_by_ndm,chances_of_getting_leads, clinic_image_link, selfie_image_link, gps_location_of_the_clinic, date_of_meeting, time_of_meeting, timestamp_of_the_meeting, latitude, longitude } = req.body;
+        if (!ndm_name || !doctor_phone_number) {
+            throw new apiError(400,"ndm name and doctor phone number are compulsory");
+        }
+
+        const timestamp = processTimeStamp(timestamp_of_the_meeting);
+
+        const phone = process_phone_no(doctor_phone_number);
+
+        if (!phone || !timestamp) {
+            throw new apiError(400,"Invalid phone or timestamp");
+        }
+
+        const { firstName, lastName } = processDoctorName(doctor_name);
+        const dr_name = firstName + " " + lastName;
+        const fullName = dr_name.trim();
+
+
+        const locationJson = JSON.stringify({ locality: locality, latitude: latitude, longitude: longitude });
+
+        const existingDoctor = await pool.query("SELECT id, onboarding_date, last_meeting FROM doctors WHERE phone = $1", [phone]);
+
+        const NDM_name = ndm_name.trim().toLowerCase();
+        const getNDM = await pool.query("SELECT id FROM users WHERE first_name = $1 OR CONCAT(first_name,' ',last_name) = $1", [NDM_name]);
+
+        if (getNDM.rows.length == 0) throw new apiError(500,"No ndm found with the name " + ndm_name);
+        let NDM = getNDM?.rows[0]?.id;
+
+        if (existingDoctor?.rows?.length > 0) {
+            // UPDATE
+            const doc = existingDoctor.rows[0];
+            let newOnboarding = new Date(doc.onboarding_date) < timestamp ? new Date(doc.onboarding_date) : timestamp;
+            let newLastMeeting = new Date(doc.last_meeting) > timestamp ? new Date(doc.last_meeting) : timestamp;
+            if (doc.last_meeting > timestamp) {
+                NDM = doc.assigned_agent_id_offline;
+            }
+
+
+            await pool.query(
+                `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, gps_location_link = $4, updated_at = $6, assigned_agent_id_offline = $7 WHERE phone = $5`,
+                [newOnboarding, newLastMeeting, locationJson, gps_location_of_the_clinic, phone, timestamp, NDM]
+            );
+        } else {
+            // INSERT
+            await pool.query(
+                `INSERT INTO doctors (first_name, phone, location, gps_location_link, onboarding_date, last_meeting, assigned_agent_id_offline) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [fullName, phone, locationJson, gps_location_of_the_clinic, timestamp, timestamp, NDM]
+            );
+        }
+
+        const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [phone]);
+        if (doctor?.rows[0]?.length == 0) throw new apiError(500,"Some error occured");
+        const photosJSON = JSON.stringify({
+            clinicImage: clinic_image_link,
+            selfieImage: selfie_image_link
+        })
+
+        const meeting = await pool.query(
+            "INSERT INTO doctor_meetings (doctor_id,agent_id,meeting_type,duration,location,gps_location_link,meeting_notes,photos,gps_verified,meeting_summary,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id,agent_id,doctor_id",
+            [doctor?.rows[0]?.id, NDM, "physical", duration_of_meeting, locationJson, gps_location_of_the_clinic, queries_by_the_doctor, photosJSON, true, chances_of_getting_leads, timestamp, timestamp]
+        )
+
+        res.status(201,new apiResponse(201,meeting))
+        
+    })
     createDoctorBatchAndMeetings = asyncHandler(async (req, res, next) => {
         const file = req.file;
         if (!file) throw new apiError(400, "No file uploaded.");
@@ -43,7 +109,7 @@ export default class doctorController {
                 const timeOfMeeting = row[16];
                 const date = row[17];
 
-                const timestamp = processTimeStamp(date+" "+timeOfMeeting);
+                const timestamp = processTimeStamp(date + " " + timeOfMeeting);
 
                 if (!FullName || !phoneRaw || !timestamp) {
                     failedRows.push({ rowNumber, reason: "Missing Name, Phone, or timestamp" });
@@ -61,7 +127,7 @@ export default class doctorController {
                 }
 
                 const { firstName, lastName } = processDoctorName(FullName);
-                const dr_name = firstName+" "+lastName;
+                const dr_name = firstName + " " + lastName;
                 const fullName = dr_name.trim();
 
 
@@ -70,7 +136,7 @@ export default class doctorController {
                 const existingDoctor = await pool.query("SELECT id, onboarding_date, last_meeting FROM doctors WHERE phone = $1", [phone]);
                 const ndm_name = row[0].trim().toLowerCase();
                 const getNDM = await pool.query("SELECT id FROM users WHERE first_name = $1 OR CONCAT(first_name,' ',last_name) = $1", [ndm_name]);
-                if(getNDM.rows.length == 0)continue;
+                if (getNDM.rows.length == 0) continue;
                 let NDM = getNDM?.rows[0]?.id;
                 if (existingDoctor?.rows?.length > 0) {
                     // UPDATE
@@ -99,13 +165,13 @@ export default class doctorController {
                 const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [phone]);
                 if (doctor?.rows[0]?.length == 0) continue;
                 const photosJSON = JSON.stringify({
-                    clinicImage:row[12],
-                    selfieImage:row[13]
+                    clinicImage: row[12],
+                    selfieImage: row[13]
                 })
 
                 const meeting = await pool.query(
                     "INSERT INTO doctor_meetings (doctor_id,agent_id,meeting_type,duration,location,gps_location_link,meeting_notes,photos,gps_verified,meeting_summary,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-                    [doctor?.rows[0]?.id, NDM, "physical", row[6],locationJson,row[14],row[8],photosJSON,true,row[11],timestamp,timestamp]
+                    [doctor?.rows[0]?.id, NDM, "physical", row[6], locationJson, row[14], row[8], photosJSON, true, row[11], timestamp, timestamp]
                 )
 
             } catch (error) {
@@ -227,7 +293,7 @@ export default class doctorController {
                 console.error(`[Row ${rowNumber}]: FAILED with error: ${error.message}`);
             }
         }
-        
+
         console.log("\n--- Batch Processing Complete ---");
 
         res.status(201).json(new apiResponse(201, {
