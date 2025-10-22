@@ -120,7 +120,7 @@ export default class patientLeadController {
             try {
                 // CSV Index mapping (from "Patient Appointment Master Data - PatientDispositionLogs.csv" snippet):
                 const uniqueCode = row[0]// booking_reference
-                const initialDisposition = processString(row[2]); // previous_disposition
+                const initialDisposition = processString(row[2])=="na"?null:processString(row[2]); // previous_disposition
                 const nextDisposition = processString(row[3]); // new_disposition
                 const comments = row[4]; // notes
                 const timestampRaw = row[5]; // created_at
