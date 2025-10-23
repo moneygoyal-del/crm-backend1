@@ -85,7 +85,7 @@ export default class userController {
             [id, phone]
         );
 
-        if (!deleteUser.rows) {
+        if (deleteUser.rowCount == 0) {
             throw new apiError(500, "Failed to delete user");
         }
 
