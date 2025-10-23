@@ -10,8 +10,8 @@ router.route("/createBatchDoctorsandMeetings").post(upload.single('doctors'), Do
 router.route("/createOnlineDoctors/:ndmPhone").post(upload.single('doctors'), DoctorController.createOnlineDoctors);
 
 
-router.route("createByNdmName").post(DoctorController.createDoctorByName);
-// router.route("delete").delete();
+router.route("/createByNdmName").post(DoctorController.createDoctorByName);
+router.route("/deleteMeeting").delete(DoctorController.deleteDoctorMeeting);
 // router.route("update").put();
 
 export default router;
