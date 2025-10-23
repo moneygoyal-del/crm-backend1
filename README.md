@@ -1,3 +1,6 @@
+# crm-backend
+This is the backend repository from Medpho CRM
+
 This repository contains the backend implementation for the Medpho CRM system, built on a simplified monolithic architecture. The primary goal is to manage doctor-referral relationships and patient appointment workflows while providing robust data for analytics via Metabase.
 
 The system is designed around the core entities of Users (agents/NDMs), Doctors, and Patients/OPD Bookings. The key functional modules are:
