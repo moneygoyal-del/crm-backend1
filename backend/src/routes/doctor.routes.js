@@ -5,13 +5,17 @@ import upload from "../middleware/multer.middleware.js";
 const router = Router();
 const DoctorController = new doctorController();
 
+// CREATE: Single doctor creation with meeting
+router.route("/createByNdmName").post(DoctorController.createDoctorByName);
 
+// CREATE: Batch upload routes
 router.route("/createBatchDoctorsandMeetings").post(upload.single('doctors'), DoctorController.createDoctorBatchAndMeetings);
 router.route("/createOnlineDoctors/:ndmPhone").post(upload.single('doctors'), DoctorController.createOnlineDoctors);
 
+// UPDATE: Single doctor update
+router.route("/update").put(DoctorController.updateDoctor);
 
-router.route("createByNdmName").post(DoctorController.createDoctorByName);
-// router.route("delete").delete();
-// router.route("update").put();
+// DELETE: Single doctor deletion
+router.route("/delete").delete(DoctorController.deleteDoctor);
 
 export default router;
