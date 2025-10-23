@@ -9,6 +9,7 @@ import { processDoctorName } from "../helper/process_doctor_name.helper.js";
 
 export default class doctorController {
     createDoctorByName = asyncHandler(async (req, res, next) => {
+        console.log("request recieved")
         const { ndm_name, doctor_name, doctor_phone_number, locality, duration_of_meeting, queries_by_the_doctor, comments_by_ndm,chances_of_getting_leads, clinic_image_link, selfie_image_link, gps_location_of_the_clinic, date_of_meeting, time_of_meeting, timestamp_of_the_meeting, latitude, longitude } = req.body;
         if (!ndm_name || !doctor_phone_number) {
             throw new apiError(400,"ndm name and doctor phone number are compulsory");
@@ -30,10 +31,8 @@ export default class doctorController {
         const locationJson = JSON.stringify({ locality: locality, latitude: latitude, longitude: longitude });
 
         const existingDoctor = await pool.query("SELECT id, onboarding_date, last_meeting FROM doctors WHERE phone = $1", [phone]);
-
         const NDM_name = ndm_name.trim().toLowerCase();
         const getNDM = await pool.query("SELECT id FROM users WHERE first_name = $1 OR CONCAT(first_name,' ',last_name) = $1", [NDM_name]);
-
         if (getNDM.rows.length == 0) throw new apiError(500,"No ndm found with the name " + ndm_name);
         let NDM = getNDM?.rows[0]?.id;
 
@@ -71,9 +70,11 @@ export default class doctorController {
             [doctor?.rows[0]?.id, NDM, "physical", duration_of_meeting, locationJson, gps_location_of_the_clinic, queries_by_the_doctor, photosJSON, true, chances_of_getting_leads, timestamp, timestamp]
         )
 
-        res.status(201,new apiResponse(201,meeting))
-        
+        res.status(201).json(new apiResponse(201,meeting.rows[0]));
+
     })
+
+
     createDoctorBatchAndMeetings = asyncHandler(async (req, res, next) => {
         const file = req.file;
         if (!file) throw new apiError(400, "No file uploaded.");
@@ -190,6 +191,7 @@ export default class doctorController {
         }, "Batch processing complete."));
     });
 
+
     createOnlineDoctors = asyncHandler(async (req, res, next) => {
         const file = req.file;
         const ndmPhoneRaw = req.params.ndmPhone;
@@ -303,4 +305,25 @@ export default class doctorController {
             failures: failedRows
         }, "--- Batch Processing Complete ---"));
     });
+
+
+
+    deleteDoctorMeeting = asyncHandler(async (req, res, next) => {
+        const { id } = req.body;
+
+        if (!id) {
+            throw new apiError(400, "Provide id of the meeting to delete");
+        }
+
+        const deleteDoctorMeeting = await pool.query(
+            "DELETE FROM DOCTOR_MEETINGS WHERE ID = $1",
+            [id]
+        );
+        console.log(deleteDoctorMeeting);
+        if (deleteDoctorMeeting?.rowCount == 0) {
+            throw new apiError(500, "Failed to delete user");
+        }
+
+        res.status(200).json(new apiResponse(200,{}, "Doctor successfully deleted"));
+    })
 }
