@@ -15,8 +15,19 @@ const connectDB = async () => {
             if (err) {
                 return console.error("Error acquiring client", err.stack);
             }
-            console.log("Successfully connected to PostgreSQL database!");
-            client.release();
+
+           
+            client.query("SET search_path TO crm, public;", (err) => {
+                if (err) {
+                    console.error("Error setting search_path:", err.stack);
+                    release();
+                    return;
+                }
+                console.log("Successfully connected to PostgreSQL database.");
+                release();
+            });
+            // ----------------------------------------
+            
         });
     } catch (error) {
         console.error("ERROR: ", error);
