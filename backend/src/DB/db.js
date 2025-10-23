@@ -7,6 +7,9 @@ const pool = new Pool({
     database: process.env.POSTGRES_DB,
     password: process.env.POSTGRES_PASSWORD,
     port: process.env.POSTGRES_PORT,
+    // --- ADD THIS LINE TO SET THE DEFAULT SCHEMA FOR ALL CONNECTIONS ---
+    options: `-c search_path=crm,public` 
+    // ------------------------------------------------------------------
 });
 
 const connectDB = async () => {
@@ -15,19 +18,10 @@ const connectDB = async () => {
             if (err) {
                 return console.error("Error acquiring client", err.stack);
             }
-
-           
-            client.query("SET search_path TO crm, public;", (err) => {
-                if (err) {
-                    console.error("Error setting search_path:", err.stack);
-                    release();
-                    return;
-                }
-                console.log("Successfully connected to PostgreSQL database.");
-                release();
-            });
-            // ----------------------------------------
-            
+            // Remove the previous manual SET search_path logic here if you added it, 
+            // and replace it with a simple check.
+            console.log("Successfully connected to PostgreSQL database!");
+            release();
         });
     } catch (error) {
         console.error("ERROR: ", error);
