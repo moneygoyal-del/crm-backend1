@@ -173,9 +173,9 @@ export default class patientLeadController {
     createDispositionLogBatchUpload = asyncHandler(async (req, res, next) => {
         const file = req.file;
         if (!file) throw new apiError(400, "No file uploaded.");
-
+    
         const dispositionLogs = await readCsvFile(file.path);
-
+    
         fs.unlink(file.path, (err) => {
             if (err) {
                 console.error('Error deleting file:', err);
@@ -183,76 +183,132 @@ export default class patientLeadController {
                 console.log('File deleted successfully:', file.path);
             }
         });
-
-        const logsCreated = [];
+    
+        // --- OPTIMIZATION SETUP ---
+        const logsToInsert = [];
         const failedRows = [];
-
+        const uniqueCodes = [];
+        const opdMap = {}; // Map to store lookup results: {booking_reference: {id, medical_condition}}
+        const startTime = Date.now();
+        
+        // 1. PHASE 1: Collect all unique booking references for bulk lookup
+        for (const row of dispositionLogs) {
+            if (row[0]) {
+                uniqueCodes.push(row[0]);
+            }
+        }
+    
+        if (uniqueCodes.length === 0) {
+             return res.status(201).json(new apiResponse(201, { newly_created_count: 0, failed_count: 0, failures: [] }, "No valid data to process."));
+        }
+    
+        // 2. PHASE 2: Perform BULK LOOKUP
+        // Construct placeholder string for the IN clause (e.g., $1, $2, $3, ...)
+        const placeholderList = uniqueCodes.map((_, i) => `$${i + 1}`).join(', ');
+    
+        const bulkOpdResult = await pool.query(
+            `SELECT id, medical_condition, booking_reference FROM opd_bookings WHERE booking_reference IN (${placeholderList})`,
+            uniqueCodes
+        );
+    
+        // Populate the lookup map for fast O(1) access inside the main loop
+        bulkOpdResult.rows.forEach(row => {
+            opdMap[row.booking_reference] = { 
+                id: row.id, 
+                medical_condition: row.medical_condition 
+            };
+        });
+        // --- END OPTIMIZATION SETUP ---
+    
+        // 3. PHASE 3: Loop and Collect Data for Bulk Insert
         for(const i in dispositionLogs){
             const row = dispositionLogs[i];
             const rowNumber = Number(i) + 2; 
+    
             try {
-                // CSV Index mapping (from "Patient Appointment Master Data - PatientDispositionLogs.csv" snippet):
-                const uniqueCode = row[0]// booking_reference
+                const uniqueCode = row[0];
                 const initialDispositionRaw = processString(row[2]);
-                const initialDisposition = initialDispositionRaw === "na" ? null : initialDispositionRaw; // previous_disposition (Handling "na" -> null)
-                const nextDisposition = processString(row[3]); // new_disposition
-                const comments = row[4]; // notes
-                const timestampRaw = row[5]; // created_at
-
+                const initialDisposition = initialDispositionRaw === "na" ? null : initialDispositionRaw;
+                const nextDisposition = processString(row[3]);
+                const comments = row[4];
+                const timestampRaw = row[5];
+    
                 if (!uniqueCode || !nextDisposition) {
                      throw new Error("Missing Unique Code or Next Disposition (required fields).");
                 }
                 
-                // Process timestamp
-                const created_at = processTimeStamp(timestampRaw);
+                // Check lookup map instead of hitting the DB again
+                const opdData = opdMap[uniqueCode]; 
                 
-                // 1. Find opd_booking_id and medical_condition from opd_bookings
-                const opdResult = await pool.query(
-                    "SELECT id, medical_condition FROM opd_bookings WHERE booking_reference = $1",
-                    [uniqueCode]
-                );
-
-                if (opdResult.rows.length === 0) {
+                if (!opdData) {
                     throw new Error(`OPD Booking not found for unique code: ${uniqueCode}`);
                 }
                 
-                const opd_booking_id = opdResult.rows[0].id;
-                // Map medical_condition (from opd_bookings) to disposition_reason (in logs) 
-                const disposition_reason = opdResult.rows[0].medical_condition; 
+                const created_at = processTimeStamp(timestampRaw);
                 
-                // 2. Insert into opd_dispositions_logs
-                const newLog = await pool.query(
-                    `INSERT INTO opd_dispositions_logs (
-                        opd_booking_id, previous_disposition, new_disposition, disposition_reason, notes, created_at, updated_by_user_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7) 
-                    RETURNING id, opd_booking_id, new_disposition`,
-                    [
-                        opd_booking_id,
-                        initialDisposition, 
-                        nextDisposition, 
-                        disposition_reason, 
-                        comments, 
-                        created_at, 
-                        null // updated_by_user_id is set to null
-                    ]
+                // Collect all values into a single array for the final bulk insert
+                logsToInsert.push(
+                    opdData.id, 
+                    initialDisposition, 
+                    nextDisposition, 
+                    opdData.medical_condition, 
+                    comments, 
+                    created_at, 
+                    null // updated_by_user_id is set to null
                 );
-                
-                logsCreated.push(newLog.rows[0]);
-
+    
             } catch (error) {
                 console.error(`[Row ${rowNumber}]: FAILED with error: ${error.message}`);
                 failedRows.push({ rowNumber, reason: error.message });
             }
         }
-
+        
+        let logsCreatedCount = 0;
+        
+        // 4. PHASE 4: Perform BULK INSERT
+        if (logsToInsert.length > 0) {
+            const columns = [
+                'opd_booking_id', 'previous_disposition', 'new_disposition', 
+                'disposition_reason', 'notes', 'created_at', 'updated_by_user_id'
+            ];
+            const rowLength = columns.length; // 7 columns per row
+    
+            // Generate placeholders: ($1, $2, $3, ...), ($8, $9, $10, ...), ...
+            const valuePlaceholders = logsToInsert
+                .map((_, i) => i + 1)
+                .reduce((acc, v, i) => {
+                    const groupIndex = Math.floor(i / rowLength);
+                    if (i % rowLength === 0) {
+                        acc.push(`($${v}, $${v + 1}, $${v + 2}, $${v + 3}, $${v + 4}, $${v + 5}, $${v + 6})`);
+                    }
+                    return acc;
+                }, [])
+                .join(', ');
+    
+            const bulkInsertQuery = `
+                INSERT INTO opd_dispositions_logs (${columns.join(', ')}) 
+                VALUES ${valuePlaceholders}
+            `;
+    
+            const result = await pool.query(bulkInsertQuery, logsToInsert);
+            logsCreatedCount = result.rowCount;
+        }
+        
+        // --- FINAL TIME TRACKING ---
+        const endTime = Date.now();
+        const totalTimeSeconds = (endTime - startTime) / 1000;
+        console.log(`\n--- Batch Processing Complete ---`);
+        console.log(`Processed ${dispositionLogs.length} rows in ${totalTimeSeconds.toFixed(2)} seconds.`);
+        console.log(`Successes: ${logsCreatedCount}, Failures: ${failedRows.length}.`);
+        // ---------------------------
+    
         res.status(201).json(new apiResponse(201, {
-            newly_created_count: logsCreated.length,
+            newly_created_count: logsCreatedCount,
             failed_count: failedRows.length,
             failures: failedRows
         }, "OPD Disposition Logs batch processing complete."));
-
+    
     });
-
 
     // --- UPDATE SINGLE OPD BOOKING ---  Update by booking_reference
     updatePatientLead = asyncHandler(async (req, res, next) => {
