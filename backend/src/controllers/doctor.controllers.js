@@ -318,365 +318,356 @@ export default class doctorController {
         );
     });
 
-    // BATCH: Create Doctor Batch and Meetings (Existing)
-    // BATCH: Create Doctor Batch and Meetings (Existing)
+   
+    // BATCH: Create Doctor Batch and Meetings 
     createDoctorBatchAndMeetings = asyncHandler(async (req, res, next) => {
-        const file = req.file;
-        if (!file) throw new apiError(400, "No file uploaded.");
+    const file = req.file;
+    if (!file) throw new apiError(400, "No file uploaded.");
 
-        const doctorsCsvData = await readCsvFile(file.path);
+    const doctorsCsvData = await readCsvFile(file.path);
 
-        fs.unlink(file.path, (err) => {
-            if (err) {
-                console.error("Error deleting file:", err);
-            } else {
-                console.log("File deleted successfully:", file.path);
-            }
-        });
-
-        const processedDoctors = [];
-        const updatedDoctors = [];
-        const failedRows = [];
-
-        // Log the start of processing
-        console.log(
-            `Starting batch processing for ${doctorsCsvData.length} data rows...`
-        );
-
-        for (let i = 0; i < doctorsCsvData.length; i++) {
-            const row = doctorsCsvData[i];
-            const rowNumber = i + 2;
-
-            try {
-                if (!row || row.length < 17) {
-                    failedRows.push({
-                        rowNumber,
-                        reason: "Row is empty or has too few columns",
-                    });
-                    console.log(
-                        `[Row ${rowNumber}]: SKIPPED - Malformed or empty row.`
-                    );
-                    continue;
-                }
-
-                const FullName = row[1];
-                const phoneRaw = row[2];
-                const timeOfMeeting = row[16];
-                const date = row[17];
-
-                const timestamp = processTimeStamp(date + " " + timeOfMeeting);
-
-                if (!FullName || !phoneRaw || !timestamp) {
-                    failedRows.push({
-                        rowNumber,
-                        reason: "Missing Name, Phone, or timestamp",
-                    });
-                    console.log(
-                        `[Row ${rowNumber}]: SKIPPED - Essential data missing.`
-                    );
-                    continue;
-                }
-
-                const phone = process_phone_no(phoneRaw);
-
-                if (!phone || !timestamp) {
-                    failedRows.push({
-                        rowNumber,
-                        reason: `Invalid data after processing (Phone: ${phoneRaw}, Timestamp: ${timestamp})`,
-                    });
-                    console.log(
-                        `[Row ${rowNumber}]: SKIPPED - Invalid phone or timestamp.`
-                    );
-                    continue;
-                }
-
-                const { firstName, lastName } = processDoctorName(FullName);
-                const dr_name = firstName + " " + lastName;
-                const fullName = dr_name.trim();
-
-                const locationJson = JSON.stringify({
-                    locality: row[3],
-                    latitude: row[18],
-                    longitude: row[19],
-                });
-
-                const existingDoctor = await pool.query(
-                    "SELECT id, onboarding_date, last_meeting, assigned_agent_id_offline FROM doctors WHERE phone = $1",
-                    [phone]
-                );
-                const ndm_name = row[0].trim().toLowerCase();
-                const getNDM = await pool.query(
-                    "SELECT id FROM users WHERE first_name = $1 OR CONCAT(first_name,' ',last_name) = $1",
-                    [ndm_name]
-                );
-
-                if (getNDM.rows.length == 0) {
-                    console.log(
-                        `[Row ${rowNumber}]: SKIPPED - NDM '${ndm_name}' not found.`
-                    );
-                    continue;
-                }
-
-                let NDM = getNDM?.rows[0]?.id;
-
-                if (existingDoctor?.rows?.length > 0) {
-                    // UPDATE DOCTOR RECORD
-                    const doc = existingDoctor.rows[0];
-                    let newOnboarding =
-                        new Date(doc.onboarding_date) < timestamp
-                            ? new Date(doc.onboarding_date)
-                            : timestamp;
-                    let newLastMeeting =
-                        new Date(doc.last_meeting) > timestamp
-                            ? new Date(doc.last_meeting)
-                            : timestamp;
-                    if (doc.last_meeting > timestamp) {
-                        NDM = doc.assigned_agent_id_offline;
-                    }
-
-                    await pool.query(
-                        `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, gps_location_link = $4, updated_at = $6, assigned_agent_id_offline = $7 WHERE phone = $5`,
-                        [
-                            newOnboarding,
-                            newLastMeeting,
-                            locationJson,
-                            row[14],
-                            phone,
-                            timestamp,
-                            NDM,
-                        ]
-                    );
-                    updatedDoctors.push({ phone });
-                    // --- SUCCESS LOG FOR UPDATE ---
-                    console.log(
-                        `[Row ${rowNumber}]: SUCCESS - Doctor Updated (Phone: ${phone}).`
-                    );
-                } else {
-                    // INSERT NEW DOCTOR RECORD
-                    await pool.query(
-                        `INSERT INTO doctors (first_name, phone, location, gps_location_link, onboarding_date, last_meeting, assigned_agent_id_offline) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                        [
-                            fullName,
-                            phone,
-                            locationJson,
-                            row[14],
-                            timestamp,
-                            timestamp,
-                            NDM,
-                        ]
-                    );
-                    processedDoctors.push({ phone });
-                    // --- SUCCESS LOG FOR INSERT ---
-                    console.log(
-                        `[Row ${rowNumber}]: SUCCESS - Doctor Inserted (Phone: ${phone}).`
-                    );
-                }
-
-                const doctor = await pool.query(
-                    "SELECT id FROM doctors WHERE phone = $1",
-                    [phone]
-                );
-                if (doctor?.rows[0]?.length == 0) continue;
-                const photosJSON = JSON.stringify({
-                    clinicImage: row[12],
-                    selfieImage: row[13],
-                });
-
-                // INSERT NEW MEETING RECORD
-                await pool.query(
-                    "INSERT INTO doctor_meetings (doctor_id,agent_id,meeting_type,duration,location,gps_location_link,meeting_notes,photos,gps_verified,meeting_summary,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-                    [
-                        doctor?.rows[0]?.id,
-                        NDM,
-                        "physical",
-                        row[6],
-                        locationJson,
-                        row[14],
-                        row[8],
-                        photosJSON,
-                        true,
-                        row[11],
-                        timestamp,
-                        timestamp,
-                    ]
-                );
-                // --- SUCCESS LOG FOR MEETING ---
-                console.log(
-                    `[Row ${rowNumber}]: SUCCESS - Meeting Record Created.`
-                );
-            } catch (error) {
-                // --- FAILURE LOG ---
-                console.error(
-                    `[Row ${rowNumber}]: FAILED with error: ${error.message}`
-                );
-                failedRows.push({ rowNumber, reason: error.message });
-            }
+    fs.unlink(file.path, (err) => {
+        if (err) {
+            console.error('Error deleting file:', err);
+        } else {
+            console.log('File deleted successfully:', file.path);
         }
-
-        console.log("\n--- Batch Processing Complete ---");
-
-        res.status(201).json(
-            new apiResponse(
-                201,
-                {
-                    newly_created_count: processedDoctors.length,
-                    updated_count: updatedDoctors.length,
-                    failed_count: failedRows.length,
-                    failures: failedRows,
-                },
-                "Batch processing complete."
-            )
-        );
     });
 
-    createOnlineDoctors = asyncHandler(async (req, res, next) => {
-        const file = req.file;
-        const ndmPhoneRaw = req.params.ndmPhone;
+    const startTime = Date.now();
+    const allNDMNames = new Set();
+    const allDoctorPhones = new Set();
+    const rowsToProcess = [];
+    const failedRows = [];
 
-        if (!file) throw new apiError(400, "No file uploaded.");
-        if (!ndmPhoneRaw)
-            throw new apiError(400, "NDM phone number is required.");
+    // --- PASS 1: INITIAL VALIDATION & COLLECTION (NO DB INTERACTION) ---
+    for (let i = 0; i < doctorsCsvData.length; i++) {
+        const row = doctorsCsvData[i];
+        const rowNumber = i + 2;
 
-        console.log("File received:", file.path);
-        console.log("NDM Phone:", ndmPhoneRaw);
+        try {
+            if (!row || row.length < 17) throw new Error("Row is empty or has too few columns");
 
-        const ndmPhone = process_phone_no(ndmPhoneRaw);
-        if (!ndmPhone) {
-            throw new apiError(400, "Invalid NDM phone number format.");
+            const FullName = row[1];
+            const phoneRaw = row[2];
+            const ndm_name = row[0];
+            
+            const timestamp = processTimeStamp(row[17] + " " + row[16]); // date + time
+            const phone = process_phone_no(phoneRaw);
+
+            if (!FullName || !phone || !timestamp || !ndm_name) throw new Error("Missing Name, Phone, NDM Name, or timestamp");
+
+            allDoctorPhones.add(phone);
+            allNDMNames.add(ndm_name.trim().toLowerCase());
+            rowsToProcess.push({ row, rowNumber, timestamp, phone });
+        } catch (error) {
+            failedRows.push({ rowNumber, reason: error.message });
         }
+    }
+    
+    if (rowsToProcess.length === 0) {
+        return res.status(201).json(new apiResponse(201, { newly_created_count: 0, updated_count: 0, failed_count: failedRows.length, failures: failedRows }, "Batch processing complete (no valid data)."));
+    }
 
-        // Find the NDM's ID from the users table once
-        console.log(`Searching for NDM with phone ${ndmPhone}.`);
-        const ndmResult = await pool.query(
-            "SELECT id FROM users WHERE phone = $1",
-            [ndmPhone]
-        );
-        if (ndmResult.rows.length === 0) {
-            throw new apiError(404, `NDM with phone ${ndmPhone} not found.`);
-        }
-        const ndmId = ndmResult.rows[0].id;
-        console.log(`NDM found with ID: ${ndmId}.`);
 
-        const doctorsCsvData = await readCsvFile(file.path);
-        console.log(
-            `CSV data read successfully. ${doctorsCsvData.length} rows found.`
-        );
+    // --- PASS 2: BULK LOOKUPS (MINIMAL DB QUERIES) ---
+    
+    // 1. Bulk NDM Lookup: Fetch all NDM IDs needed in ONE query
+    const ndmMap = {}; // {name: id}
+    const ndmPlaceholder = Array.from(allNDMNames).map((_, i) => `$${i + 1}`).join(',');
+    const ndmResult = await pool.query(`SELECT id, first_name, last_name FROM users WHERE first_name IN (${ndmPlaceholder}) OR CONCAT(first_name,' ',last_name) IN (${ndmPlaceholder})`, Array.from(allNDMNames));
+    
+    ndmResult.rows.forEach(r => {
+        const fullName = (r.first_name + (r.last_name ? ' ' + r.last_name : '')).trim().toLowerCase();
+        ndmMap[r.first_name.toLowerCase()] = r.id;
+        ndmMap[fullName] = r.id;
+    });
 
-        fs.unlink(file.path, (err) => {
-            if (err) {
-                console.error("Error deleting file:", err);
+    // 2. Bulk Doctor Lookup: Fetch all existing doctors in ONE query
+    const doctorPlaceholder = Array.from(allDoctorPhones).map((_, i) => `$${i + 1}`).join(',');
+    const doctorResult = await pool.query(`SELECT id, phone, onboarding_date, last_meeting, assigned_agent_id_offline FROM doctors WHERE phone IN (${doctorPlaceholder})`, Array.from(allDoctorPhones));
+    const doctorMap = {}; // {phone: {id, ...}}
+    doctorResult.rows.forEach(r => doctorMap[r.phone] = r);
+
+
+    // --- PASS 3: LOCAL PROCESSING & COLLECTING FINAL DATA ---
+    
+    const newDoctorInserts = []; 
+    const updateDoctorUpdates = []; 
+    const meetingsToInsert = [];    
+    const createdDoctorIds = {};    // {phone: id or placeholder}
+    
+    let processedDoctorsCount = 0;
+    let updatedDoctorsCount = 0;
+
+    for (const { row, rowNumber, timestamp, phone } of rowsToProcess) {
+        try {
+            const ndm_name = row[0].trim().toLowerCase();
+            const NDM_id = ndmMap[ndm_name];
+
+            if (!NDM_id) { 
+                throw new Error(`NDM '${row[0]}' not found after lookup.`); 
+            }
+
+            const { firstName, lastName } = processDoctorName(row[1]);
+            const fullName = `${firstName} ${lastName}`.trim();
+            const locationJson = JSON.stringify({ locality: row[3], latitude: row[18], longitude: row[19] });
+            const gps_location_link = row[14];
+            const photosJSON = JSON.stringify({ clinicImage: row[12], selfieImage: row[13] });
+            const duration = row[6];
+            const meeting_notes = row[8];
+            const meeting_summary = row[11];
+            
+            const existingDoc = doctorMap[phone];
+
+            if (existingDoc) {
+                // UPDATE DOCTOR: Prepare data for parallel execution
+                let NDM = existingDoc.assigned_agent_id_offline;
+                let newOnboarding = new Date(existingDoc.onboarding_date) < timestamp ? existingDoc.onboarding_date : timestamp;
+                let newLastMeeting = new Date(existingDoc.last_meeting) > timestamp ? existingDoc.last_meeting : timestamp;
+                
+                if (new Date(existingDoc.last_meeting) <= timestamp) NDM = NDM_id; 
+                
+                updateDoctorUpdates.push({
+                    query: `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, gps_location_link = $4, updated_at = $6, assigned_agent_id_offline = $7 WHERE phone = $5`,
+                    params: [newOnboarding, newLastMeeting, locationJson, gps_location_link, phone, timestamp, NDM],
+                });
+                createdDoctorIds[phone] = existingDoc.id;
+                updatedDoctorsCount++;
+
             } else {
-                console.log("File deleted successfully:", file.path);
+                // NEW DOCTOR: Collect data for bulk INSERT
+                const doctorIdPlaceholder = 'NEW_ID_' + phone; 
+                newDoctorInserts.push(
+                    fullName, phone, locationJson, gps_location_link, timestamp, timestamp, NDM_id
+                );
+                createdDoctorIds[phone] = doctorIdPlaceholder; 
+                processedDoctorsCount++;
             }
-        });
-
-        const processedDoctors = [];
-        const updatedDoctors = [];
-        const failedRows = [];
-
-        console.log("Starting to process CSV rows...");
-
-        for (let i = 0; i < doctorsCsvData.length; i++) {
-            const row = doctorsCsvData[i];
-            const rowNumber = i + 2; // Assuming CSV has a header row
-            console.log(`[Row ${rowNumber}]: Processing...`);
-
-            try {
-                const doctorName = row[0];
-                const doctorPhoneRaw = row[1];
-                const location = row[2];
-
-                console.log(
-                    `[Row ${rowNumber}]: Data - Doctor: ${doctorName}, Phone: ${doctorPhoneRaw}`
-                );
-
-                if (!doctorName || !doctorPhoneRaw) {
-                    failedRows.push({
-                        rowNumber,
-                        reason: "Missing Doctor Name or Doctor Phone.",
-                    });
-                    console.log(
-                        `[Row ${rowNumber}]: SKIPPED - Missing required data.`
-                    );
-                    continue;
-                }
-
-                const doctorPhone = process_phone_no(doctorPhoneRaw);
-
-                if (!doctorPhone) {
-                    failedRows.push({
-                        rowNumber,
-                        reason: "Invalid phone number format.",
-                    });
-                    console.log(
-                        `[Row ${rowNumber}]: SKIPPED - Invalid phone number.`
-                    );
-                    continue;
-                }
-
-                // Check if the doctor already exists
-                console.log(
-                    `[Row ${rowNumber}]: Checking if doctor with phone ${doctorPhone} exists.`
-                );
-                const existingDoctor = await pool.query(
-                    "SELECT id FROM doctors WHERE phone = $1",
-                    [doctorPhone]
-                );
-
-                if (existingDoctor.rows.length > 0) {
-                    // Update the existing doctor's assigned_agent_id_online
-                    console.log(
-                        `[Row ${rowNumber}]: Doctor exists. Updating...`
-                    );
-                    await pool.query(
-                        "UPDATE doctors SET assigned_agent_id_online = $1, updated_at = NOW() WHERE phone = $2",
-                        [ndmId, doctorPhone]
-                    );
-                    updatedDoctors.push({ phone: doctorPhone });
-                    console.log(
-                        `[Row ${rowNumber}]: SUCCESS - Doctor updated.`
-                    );
-                } else {
-                    // Insert a new doctor record
-                    console.log(
-                        `[Row ${rowNumber}]: Doctor does not exist. Creating...`
-                    );
-                    const { firstName, lastName } =
-                        processDoctorName(doctorName);
-                    const fullName = `${firstName} ${lastName}`.trim();
-                    const locationJson = JSON.stringify({ locality: location });
-
-                    await pool.query(
-                        `INSERT INTO doctors (first_name, phone, location, assigned_agent_id_online) VALUES ($1, $2, $3, $4)`,
-                        [fullName, doctorPhone, locationJson, ndmId]
-                    );
-                    processedDoctors.push({ phone: doctorPhone });
-                    console.log(
-                        `[Row ${rowNumber}]: SUCCESS - Doctor created.`
-                    );
-                }
-            } catch (error) {
-                failedRows.push({ rowNumber, reason: error.message });
-                console.error(
-                    `[Row ${rowNumber}]: FAILED with error: ${error.message}`
-                );
-            }
+            
+            // Collect meeting data, using ID placeholder for new doctors
+            meetingsToInsert.push({
+                doctorId: createdDoctorIds[phone], 
+                NDM_id, duration, locationJson, gps_location_link, meeting_notes, photosJSON, meeting_summary, timestamp
+            });
+            
+        } catch (error) {
+            failedRows.push({ rowNumber, reason: error.message });
+            console.error(`[Row ${rowNumber}]: FAILED during local processing: ${error.message}`);
         }
+    }
+    
+    
+    // --- PASS 4: FINAL DATABASE WRITES (ASYNCHRONOUSLY) ---
+    
+    // 1. Execute parallel Doctor UPDATES (for existing doctors)
+    const updatePromises = updateDoctorUpdates.map(u => pool.query(u.query, u.params));
+    await Promise.all(updatePromises);
+    
+    // 2. Execute BULK INSERT for NEW Doctors and get their new IDs
+    let insertedDoctorIds = {}; // {phone: actual_uuid}
+    if (newDoctorInserts.length > 0) {
+        const columns = ['first_name', 'phone', 'location', 'gps_location_link', 'onboarding_date', 'last_meeting', 'assigned_agent_id_offline'];
+        const rowLength = columns.length; 
+        
+        const valuePlaceholders = newDoctorInserts
+            .map((_, i) => i + 1)
+            .reduce((acc, v, i) => {
+                if (i % rowLength === 0) {
+                    const placeholders = Array.from({ length: rowLength }, (_, j) => `$${v + j}`).join(', ');
+                    acc.push(`(${placeholders})`);
+                }
+                return acc;
+            }, [])
+            .join(', ');
 
-        console.log("\n--- Batch Processing Complete ---");
+        const newDoctorResult = await pool.query(`INSERT INTO doctors (${columns.join(', ')}) VALUES ${valuePlaceholders} RETURNING id, phone`, newDoctorInserts);
+        newDoctorResult.rows.forEach(r => { insertedDoctorIds[r.phone] = r.id; });
+    }
 
-        res.status(201).json(
-            new apiResponse(
-                201,
-                {
-                    newly_created_count: processedDoctors.length,
-                    updated_count: updatedDoctors.length,
-                    failed_count: failedRows.length,
-                    failures: failedRows,
-                },
-                "--- Batch Processing Complete ---"
-            )
-        );
+    // 3. Prepare Meeting data with FINAL IDs
+    const finalMeetingsToInsert = [];
+    meetingsToInsert.forEach(m => {
+        const phone = m.doctorId.replace('NEW_ID_', '');
+        const doctorId = m.doctorId.startsWith('NEW_ID_') 
+                         ? insertedDoctorIds[phone] // Use the newly inserted UUID
+                         : m.doctorId; // Use the existing UUID
+
+        if (doctorId) {
+            finalMeetingsToInsert.push(
+                doctorId, m.NDM_id, "physical", m.duration, m.locationJson, m.gps_location_link,
+                m.meeting_notes, m.photosJSON, true, m.meeting_summary, m.timestamp, m.timestamp
+            );
+        }
+    });
+
+    // 4. Execute BULK INSERT for Meetings
+    let meetingCount = 0;
+    if (finalMeetingsToInsert.length > 0) {
+        const columns = ['doctor_id', 'agent_id', 'meeting_type', 'duration', 'location', 'gps_location_link', 'meeting_notes', 'photos', 'gps_verified', 'meeting_summary', 'created_at', 'updated_at'];
+        const rowLength = columns.length; 
+        
+        const valuePlaceholders = finalMeetingsToInsert
+            .map((_, i) => i + 1)
+            .reduce((acc, v, i) => {
+                if (i % rowLength === 0) {
+                    const placeholders = Array.from({ length: rowLength }, (_, j) => `$${v + j}`).join(', ');
+                    acc.push(`(${placeholders})`);
+                }
+                return acc;
+            }, [])
+            .join(', ');
+
+        const result = await pool.query(`INSERT INTO doctor_meetings (${columns.join(', ')}) VALUES ${valuePlaceholders}`, finalMeetingsToInsert);
+        meetingCount = result.rowCount;
+    }
+
+    // --- FINAL TIME TRACKING AND RESPONSE ---
+    const endTime = Date.now();
+    const totalTimeSeconds = (endTime - startTime) / 1000;
+    
+    console.log(`\n--- Batch Processing Complete ---`);
+    console.log(`Processed ${doctorsCsvData.length} total rows in ${totalTimeSeconds.toFixed(2)} seconds.`);
+    console.log(`Successes: ${processedDoctorsCount} inserted, ${updatedDoctorsCount} updated, ${meetingCount} meetings. Failures: ${failedRows.length}.`);
+
+    res.status(201).json(new apiResponse(201, {
+        newly_created_count: processedDoctorsCount,
+        updated_count: updatedDoctorsCount,
+        failed_count: failedRows.length,
+        failures: failedRows
+    }, "Batch processing complete."));
+    });
+
+    // BATCH: Create Online Doctors 
+    createOnlineDoctors = asyncHandler(async (req, res, next) => {
+    const file = req.file;
+    const ndmPhoneRaw = req.params.ndmPhone;
+
+    if (!file) throw new apiError(400, "No file uploaded.");
+    if (!ndmPhoneRaw) throw new apiError(400, "NDM phone number is required.");
+
+    const ndmPhone = process_phone_no(ndmPhoneRaw);
+    if (!ndmPhone) throw new apiError(400, "Invalid NDM phone number format.");
+
+    // 1. Find the NDM's ID (Single Query - already efficient)
+    const ndmResult = await pool.query("SELECT id FROM users WHERE phone = $1", [ndmPhone]);
+    if (ndmResult.rows.length === 0) throw new apiError(404, `NDM with phone ${ndmPhone} not found.`);
+    const ndmId = ndmResult.rows[0].id;
+    
+    const doctorsCsvData = await readCsvFile(file.path);
+
+    fs.unlink(file.path, (err) => {
+        if (err) {
+            console.error('Error deleting file:', err);
+        } else {
+            console.log('File deleted successfully:', file.path);
+        }
+    });
+    
+    const startTime = Date.now();
+    const allDoctorPhones = new Set();
+    const rowsToProcess = [];
+    const failedRows = [];
+
+    // --- PASS 1: INITIAL VALIDATION & COLLECTION ---
+    for (let i = 0; i < doctorsCsvData.length; i++) {
+        const row = doctorsCsvData[i];
+        const rowNumber = i + 2;
+
+        try {
+            const doctorName = row[0];
+            const doctorPhoneRaw = row[1];
+
+            if (!doctorName || !doctorPhoneRaw) throw new Error("Missing Doctor Name or Doctor Phone.");
+            const doctorPhone = process_phone_no(doctorPhoneRaw);
+            if (!doctorPhone) throw new Error("Invalid phone number format.");
+
+            allDoctorPhones.add(doctorPhone);
+            rowsToProcess.push({ row, rowNumber, doctorName, doctorPhone, location: row[2] });
+        } catch (error) {
+            failedRows.push({ rowNumber, reason: error.message });
+        }
+    }
+    
+    // --- PASS 2: BULK DOCTOR LOOKUP ---
+    const doctorMap = {}; // {phone: id}
+    if (allDoctorPhones.size > 0) {
+        const doctorPhonesArray = Array.from(allDoctorPhones);
+        const placeholderList = doctorPhonesArray.map((_, i) => `$${i + 1}`).join(',');
+        const doctorResult = await pool.query(`SELECT id, phone FROM doctors WHERE phone IN (${placeholderList})`, doctorPhonesArray);
+        doctorResult.rows.forEach(r => doctorMap[r.phone] = r.id);
+    }
+
+    // --- PASS 3: LOCAL PROCESSING & COLLECTING FINAL DATA ---
+    const newDoctorInserts = []; 
+    const updateDoctorUpdates = []; // {id, phone, ndmId}
+    
+    let newlyCreatedCount = 0;
+    let updatedCount = 0;
+
+    for (const { rowNumber, doctorName, doctorPhone, location } of rowsToProcess) {
+        try {
+            const existingId = doctorMap[doctorPhone];
+            const { firstName, lastName } = processDoctorName(doctorName);
+            const fullName = `${firstName} ${lastName}`.trim();
+            const locationJson = JSON.stringify({ locality: location });
+
+            if (existingId) {
+                // Collect update data for parallel execution
+                updateDoctorUpdates.push({ id: existingId, phone: doctorPhone, ndmId: ndmId });
+                updatedCount++;
+            } else {
+                // Collect new insert data for bulk INSERT
+                newDoctorInserts.push(fullName, doctorPhone, locationJson, ndmId);
+                newlyCreatedCount++;
+            }
+        } catch (error) {
+            failedRows.push({ rowNumber, reason: error.message });
+        }
+    }
+    
+    // --- PASS 4: FINAL DATABASE WRITES (ASYNCHRONOUSLY) ---
+    
+    // 1. Execute parallel Doctor UPDATES (to set assigned_agent_id_online)
+    const updatePromises = updateDoctorUpdates.map(u => 
+        pool.query("UPDATE doctors SET assigned_agent_id_online = $1, updated_at = NOW() WHERE id = $2", [u.ndmId, u.id])
+    );
+    await Promise.all(updatePromises);
+    
+    // 2. Execute BULK INSERT for NEW Doctors
+    if (newDoctorInserts.length > 0) {
+        const columns = ['first_name', 'phone', 'location', 'assigned_agent_id_online'];
+        const rowLength = columns.length; 
+        
+        const valuePlaceholders = newDoctorInserts
+            .map((_, i) => i + 1)
+            .reduce((acc, v, i) => {
+                if (i % rowLength === 0) {
+                    const placeholders = Array.from({ length: rowLength }, (_, j) => `$${v + j}`).join(', ');
+                    acc.push(`(${placeholders})`);
+                }
+                return acc;
+            }, [])
+            .join(', ');
+
+        const bulkInsertQuery = `INSERT INTO doctors (${columns.join(', ')}) VALUES ${valuePlaceholders}`;
+        await pool.query(bulkInsertQuery, newDoctorInserts);
+    }
+
+    // --- FINAL TIME TRACKING AND RESPONSE ---
+    const endTime = Date.now();
+    const totalTimeSeconds = (endTime - startTime) / 1000;
+    
+    console.log(`\n--- Batch Processing Complete ---`);
+    console.log(`Processed ${doctorsCsvData.length} total rows in ${totalTimeSeconds.toFixed(2)} seconds.`);
+    console.log(`Successes: ${newlyCreatedCount} inserted, ${updatedCount} updated. Failures: ${failedRows.length}.`);
+
+    res.status(201).json(new apiResponse(201, {
+        newly_created_count: newlyCreatedCount,
+        updated_count: updatedCount,
+        failed_count: failedRows.length,
+        failures: failedRows
+    }, "--- Batch Processing Complete ---"));
     });
 
     deleteDoctorMeeting = asyncHandler(async (req, res, next) => {
