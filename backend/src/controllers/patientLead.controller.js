@@ -86,9 +86,9 @@ export default class patientLeadController {
     createPatientLeadBatchUpload = asyncHandler(async (req, res, next) => {
         const file = req.file;
         if (!file) throw new apiError(400, "No file uploaded.");
-
+    
         const patientLeads = await readCsvFile(file.path);
-
+    
         fs.unlink(file.path, (err) => {
             if (err) {
                 console.error('Error deleting file:', err);
@@ -96,77 +96,151 @@ export default class patientLeadController {
                 console.log('File deleted successfully:', file.path);
             }
         });
-
-        const data = [];
-        const failedRows = []; 
-
+    
+        // --- PHASE 1: PREPARATION ---
+        const startTime = Date.now();
+        const failedRows = [];
+        const opdBookingsToInsert = [];
+        const allRefreePhones = [];
+        const allNdmContacts = [];
+    
+        // Collect all unique phones for bulk lookup outside the main loop
+        for (const row of patientLeads) {
+            if (row[4]) allRefreePhones.push(row[4]); // refree_phone_no
+            if (row[2]) allNdmContacts.push(row[2]);  // ndm_contact
+        }
+        
+        // --- PHASE 2: BULK LOOKUPS ---
+    
+        // 1. Bulk Lookup for Doctors (referee_id)
+        const doctorMap = {};
+        if (allRefreePhones.length > 0) {
+            const placeholderList = allRefreePhones.map((_, i) => `$${i + 1}`).join(', ');
+            const doctorResult = await pool.query(
+                `SELECT id, phone FROM doctors WHERE phone IN (${placeholderList})`,
+                allRefreePhones
+            );
+            doctorResult.rows.forEach(row => doctorMap[row.phone] = row.id);
+        }
+        
+        // 2. Bulk Lookup for NDM/Agents (created_by_agent_id)
+        const ndmMap = {};
+        if (allNdmContacts.length > 0) {
+            const placeholderList = allNdmContacts.map((_, i) => `$${i + 1}`).join(', ');
+            const ndmResult = await pool.query(
+                `SELECT id, phone FROM users WHERE phone IN (${placeholderList})`,
+                allNdmContacts
+            );
+            ndmResult.rows.forEach(row => ndmMap[row.phone] = row.id);
+        }
+    
+        // --- PHASE 3: LOOP, VALIDATE, AND COLLECT FOR BULK INSERT ---
+    
         for(const i in patientLeads){
+            const row = patientLeads[i];
             const rowNumber = Number(i) + 2; 
+    
             try {
-                const row = patientLeads[i];
-                const city = processString(row[0]); 
+                // Data Extraction and Processing
                 const hospital_name = processString(row[1]);
                 const ndm_contact = row[2];
-                const refree_name = row[3];
                 const refree_phone_no = row[4];
                 const patient_name = row[5];
-                const patient_phone = row[6];
+                const patient_phone = process_phone_no(row[6]);
                 const _age = row[7];
                 let age = null;
                 
-                // Age validation logic to handle very large or invalid values
                 if (_age !== "N/A" && _age) {
                     const parsedAge = parseInt(_age, 10);
-                    // Check if it's a valid number and within a reasonable range (e.g., 0 to 120)
                     if (isNaN(parsedAge) || parsedAge < 0 || parsedAge > 120) {
-                        throw new Error(`Invalid or unrealistic Age value: ${_age}. Age must be a number between 0 and 120.`);
+                        throw new Error(`Invalid or unrealistic Age value: ${_age}.`);
                     }
                     age = parsedAge;
                 }
                 
                 const gender = row[8];
                 const medical_condition = row[9];
-                const panel = row[10];
-                const credits = row[11];
-                const timestamp = processTimeStamp(row[12]);
+                const panel = row[10]; // Maps to payment_mode
                 const booking_reference = row[13];
                 const tentative_visit_date = processTimeStamp(row[14]);
-                const source = row[15];
                 const current_disposition = row[16];
                 const patient_diposition_last_update = processTimeStamp(row[17]);
                 
-                if(!refree_phone_no)continue;
-                const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1",[refree_phone_no]);
-                if(doctor?.rows?.length == 0)continue;
-                const refree_id = doctor?.rows[0]?.id;
-                
-                if(!ndm_contact)continue;
-                const ndm = await pool.query("SELECT id FROM users WHERE phone = $1",[ndm_contact]);
-                if(ndm?.rows?.length == 0)continue;
-                const created_by_agent_id = ndm?.rows[0]?.id;
-                
+                // Lookups from local maps (O(1) complexity)
+                const refree_id = doctorMap[refree_phone_no];
+                const created_by_agent_id = ndmMap[ndm_contact];
+    
+                // Validation checks
+                if (!refree_id) throw new Error(`Referee Doctor not found with phone: ${refree_phone_no}`);
+                if (!created_by_agent_id) throw new Error(`NDM/Agent not found with phone: ${ndm_contact}`);
+                if (!booking_reference || !hospital_name || !medical_condition || !patient_phone) {
+                    throw new Error("Missing required fields: Booking Reference, Hospital, Medical Condition, or Patient Phone.");
+                }
+                if(!tentative_visit_date) throw new Error("Invalid Tentative Visit Date format.");
                 
                 const created_at = new Date().toISOString(); 
-                if(!tentative_visit_date)continue;           
                 const appointment_date = tentative_visit_date.split("T")[0];  
-                //save the opd
-                const newOPD = await pool.query(
-                    "INSERT INTO opd_bookings (booking_reference,patient_name,patient_phone,age,gender,medical_condition,hospital_name,appointment_date,current_disposition,created_by_agent_id,last_interaction_date,source,referee_id,created_at,updated_at, payment_mode) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id,booking_reference ",
-                    [booking_reference,patient_name,patient_phone,age,gender,medical_condition,hospital_name,appointment_date,current_disposition,created_by_agent_id,patient_diposition_last_update,"doctor",refree_id,created_at,created_at, panel]
-                )
-                data.push(newOPD.rows[0]);
+    
+                // Collect values for the bulk insert query
+                opdBookingsToInsert.push(
+                    booking_reference, patient_name, patient_phone, age, gender, medical_condition, 
+                    hospital_name, appointment_date, current_disposition, created_by_agent_id, 
+                    patient_diposition_last_update, "doctor", refree_id, created_at, created_at, panel
+                );
+                
             } catch (error) {
                 console.error(`[Row ${rowNumber}]: FAILED with error: ${error.message}`);
                 failedRows.push({ rowNumber: rowNumber, reason: error.message });
             }
         }
-
+    
+        // --- PHASE 4: BULK INSERT ---
+        let newlyCreatedCount = 0;
+    
+        if (opdBookingsToInsert.length > 0) {
+            const columns = [
+                "booking_reference", "patient_name", "patient_phone", "age", "gender", "medical_condition", 
+                "hospital_name", "appointment_date", "current_disposition", "created_by_agent_id", 
+                "last_interaction_date", "source", "referee_id", "created_at", "updated_at", "payment_mode"
+            ];
+            const rowLength = columns.length; // 16 columns per row
+    
+            // Generate placeholders: ($1, $2, ... $16), ($17, $18, ... $32), ...
+            const valuePlaceholders = opdBookingsToInsert
+                .map((_, i) => i + 1)
+                .reduce((acc, v, i) => {
+                    if (i % rowLength === 0) {
+                        const placeholders = Array.from({ length: rowLength }, (_, j) => `$${v + j}`).join(', ');
+                        acc.push(`(${placeholders})`);
+                    }
+                    return acc;
+                }, [])
+                .join(', ');
+    
+            const bulkInsertQuery = `
+                INSERT INTO opd_bookings (${columns.join(', ')}) 
+                VALUES ${valuePlaceholders}
+                RETURNING id, booking_reference
+            `;
+            
+            const result = await pool.query(bulkInsertQuery, opdBookingsToInsert);
+            newlyCreatedCount = result.rowCount;
+        }
+    
+        // --- FINAL TIME TRACKING ---
+        const endTime = Date.now();
+        const totalTimeSeconds = (endTime - startTime) / 1000;
+        console.log(`\n--- Batch Processing Complete ---`);
+        console.log(`Processed ${patientLeads.length} rows in ${totalTimeSeconds.toFixed(2)} seconds.`);
+        console.log(`Successes: ${newlyCreatedCount}, Failures: ${failedRows.length}.`);
+        // ---------------------------
+    
         res.status(201).json(new apiResponse(201, {
-            newly_created_count: data.length,
+            newly_created_count: newlyCreatedCount,
             failed_count: failedRows.length,
             failures: failedRows
         }, "Opd Bookings batch processing complete."));
-
+    
     });
 
     // --- BATCH UPLOAD DISPOSITION LOGS  ---
