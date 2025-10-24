@@ -39,38 +39,98 @@ export default class userController {
         res.status(201).json(new apiResponse(200, newUser.rows, "User successfully created"));
     })
 
-    createUserBatchNDM = asyncHandler(async (req, res, next) => {
-        // phone ndm_name role
-        const file = req.file;
-        const users = await readCsvFile(file.path);
+    // BATCH: Create User Batch (NDM) 
+   createUserBatchNDM = asyncHandler(async (req, res, next) => {
+    const file = req.file;
+    const usersData = await readCsvFile(file.path);
 
-        fs.unlink(file.path, (err) => {
-            if (err) {
-                console.error('Error deleting file:', err);
-            } else {
-                console.log('File deleted successfully:', file.path);
-            }
-        });
-        
-        const newUsers = [];
-        const created_at = new Date().toISOString();
-        const updated_at = created_at;
-        for (const ind in users) {
-            const row = users[ind];
+    fs.unlink(file.path, (err) => {
+        if (err) {
+            console.error('Error deleting file:', err);
+        } else {
+            console.log('File deleted successfully:', file.path);
+        }
+    });
+    
+    const startTime = Date.now();
+    const usersToInsert = [];
+    const failedRows = [];
+    const created_at = new Date().toISOString();
+    const updated_at = created_at;
+    
+    // --- PASS 1: VALIDATION AND DATA COLLECTION (LOCAL PROCESSING) ---
+    for (let i = 0; i < usersData.length; i++) {
+        const row = usersData[i];
+        const rowNumber = i + 2; 
+
+        try {
+            // CSV columns: [0] phone, [1] first_name, [2] last_name, [3] role
             const phone = process_phone_no(row[0]);
             const first_name = processString(row[1]);
             const last_name = processString(row[2]);
             const role = processString(row[3]);
-            if (!phone || !first_name) continue;
-            const newUser = await pool.query(
-                "INSERT INTO USERS (PHONE,FIRST_NAME,LAST_NAME,CREATED_AT,UPDATED_AT, PASSWORD_HASH, ROLE) VALUES ( $1 , $2 , $3 , $4 , $5 , 'medpho', $6) RETURNING ID,PHONE; ",
-                [phone, first_name, last_name, created_at, updated_at, role]
+            
+            if (!phone || !first_name) {
+                throw new Error("First name or phone number is missing/invalid.");
+            }
+            
+            // Collect all parameters for the final bulk insert query
+            usersToInsert.push(
+                phone, first_name, last_name, created_at, updated_at, role
             );
-            newUsers.push(newUser.rows);
+        } catch (error) {
+            console.error(`[Row ${rowNumber}]: FAILED with error: ${error.message}`);
+            failedRows.push({ rowNumber: rowNumber, reason: error.message });
         }
+    }
 
-        res.status(201).json(new apiResponse(201, newUsers, "NDMs created successfully"));
-    });
+    let newlyCreatedCount = 0;
+    
+    // --- PASS 2: BULK INSERTION (SINGLE DB QUERY) ---
+    if (usersToInsert.length > 0) {
+        const columns = ['phone', 'first_name', 'last_name', 'created_at', 'updated_at', 'role'];
+        const rowLength = columns.length; // 6 columns per row
+        const passwordHashValue = "'medpho'"; // Hardcoded password hash is the same for all
+
+        // Generate placeholders: ($1, $2, $3, $4, $5, 'medpho'), ($7, $8, $9, $10, $11, 'medpho'), ...
+        const valuePlaceholders = usersToInsert
+            .map((_, i) => i + 1)
+            .reduce((acc, v, i) => {
+                if (i % rowLength === 0) {
+                    const placeholders = Array.from({ length: rowLength - 1 }, (_, j) => `$${v + j}`).join(', ');
+                    acc.push(`(${placeholders}, ${passwordHashValue})`);
+                }
+                return acc;
+            }, [])
+            .join(', ');
+            
+        // Remove the hardcoded password value from the parameters array before execution (it's in the query)
+        const parametersWithoutPassword = usersToInsert.filter((_, i) => (i + 1) % rowLength !== 0);
+
+        const bulkInsertQuery = `
+            INSERT INTO USERS (PHONE, FIRST_NAME, LAST_NAME, CREATED_AT, UPDATED_AT, PASSWORD_HASH, ROLE) 
+            VALUES ${valuePlaceholders}
+            RETURNING ID, PHONE
+        `;
+        
+        const result = await pool.query(bulkInsertQuery, parametersWithoutPassword);
+        newlyCreatedCount = result.rowCount;
+    }
+
+    // --- FINAL TIME TRACKING AND RESPONSE ---
+    const endTime = Date.now();
+    const totalTimeSeconds = (endTime - startTime) / 1000;
+    
+    console.log(`\n--- Batch Processing Complete ---`);
+    console.log(`Processed ${usersData.length} rows in ${totalTimeSeconds.toFixed(2)} seconds.`);
+    console.log(`Successes: ${newlyCreatedCount}, Failures: ${failedRows.length}.`);
+
+    res.status(201).json(new apiResponse(201, {
+        newly_created_count: newlyCreatedCount,
+        failed_count: failedRows.length,
+        failures: failedRows,
+    }, "NDMs created successfully"));
+});
 
 
     deleteUser = asyncHandler(async (req, res, next) => {
