@@ -7,7 +7,7 @@ import userRouter from "./routes/user.routes.js"
 import doctorRouter from "./routes/doctor.routes.js"
 import patientLeadRouter from "./routes/patientLeads.routes.js";
 
-const port = process.env.PORT || 8000;
+const port = process.env.INTERNAL_PORT || 8000;
 
 connectDB()
     .then(() => {
