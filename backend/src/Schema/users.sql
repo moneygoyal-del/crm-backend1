@@ -5,6 +5,7 @@ CREATE TABLE users (
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100),
     phone VARCHAR(20) UNIQUE NOT NULL,
+    secondary_phone VARCHAR(20) ,
     role VARCHAR(50) NOT NULL DEFAULT 'agent',
     team_id UUID, 
     is_active BOOLEAN DEFAULT true,
