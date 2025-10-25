@@ -1,11 +1,7 @@
 import apiError from "../utils/apiError.utils.js";
 import apiResponse from "../utils/apiResponse.utils.js";
 import asyncHandler from "../utils/asynchandler.utils.js";
-import {
-    process_phone_no,
-    processTimeStamp,
-    processString,
-} from "../helper/preprocess_data.helper.js";
+import { process_phone_no, processTimeStamp, processString, convertDurationToMinutes, parseCallLogTimestamp} from "../helper/preprocess_data.helper.js";
 import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
 import fs from "fs";
@@ -690,4 +686,191 @@ export default class doctorController {
             new apiResponse(200, {}, "Doctor successfully deleted")
         );
     });
+
+     //BATCH: Create Doctor Call Logs (Batch Upload of Call Logs)
+    createDoctorCallLogBatch = asyncHandler(async (req, res, next) => {
+        const file = req.file;
+        if (!file) throw new apiError(400, "No file uploaded.");
+
+        const doctorsCallLogs = await readCsvFile(file.path);
+
+        fs.unlink(file.path, (err) => {
+            if (err) {
+                console.error('Error deleting file:', err);
+            } else {
+                console.log('File deleted successfully:', file.path);
+            }
+        });
+
+        const startTime = Date.now();
+        const failedRows = [];
+        const rowsToProcess = [];
+        const allDoctorPhones = new Set();
+        const allAgentPhones = new Set();
+        
+        // --- PASS 1: INITIAL DATA COLLECTION & VALIDATION (NO DB) ---
+        for (let i = 0; i < doctorsCallLogs.length; i++) {
+            const row = doctorsCallLogs[i];
+            const rowNumber = i + 2;
+
+            try {
+                // CORRECTED INDEX: Customer Phone is row[2]. SF Number is row[11].
+                const doctorPhoneRaw = row[2]; 
+                const agentPhoneRaw = row[11]; 
+                const startTimeRaw = row[9];
+                
+                if (!doctorPhoneRaw || !agentPhoneRaw) {
+                    throw new Error("Missing Doctor Phone or SF Number.");
+                }
+                
+                let doctorPhone;
+                let agentPhone;
+
+                // 1. Check for Invalid Phone Number format (Throws "Provide a valid phone number")
+                try {
+                    doctorPhone = process_phone_no(doctorPhoneRaw);
+                    agentPhone = process_phone_no(agentPhoneRaw);
+                } catch (phoneError) {
+                    throw new Error("Provide a valid phone number");
+                }
+                
+                // 2. Check for Invalid Time Value using local custom parser
+                const timestamp = parseCallLogTimestamp(startTimeRaw);
+                
+                if (!timestamp) {
+                     throw new Error("Invalid time value");
+                }
+                
+                allDoctorPhones.add(doctorPhone);
+                allAgentPhones.add(agentPhone);
+                rowsToProcess.push({ row, rowNumber, doctorPhone, agentPhone, timestamp });
+
+            } catch (error) {
+                failedRows.push({ rowNumber, reason: error.message });
+                console.error(`[Row ${rowNumber}]: FAILED during local validation: ${error.message}`);
+            }
+        }
+
+        if (rowsToProcess.length === 0) {
+            return res.status(201).json(new apiResponse(201, { newly_created_count: 0, failed_count: failedRows.length, failures: failedRows }, "Batch processing complete (no valid data)."));
+        }
+
+
+        // --- PASS 2: BULK LOOKUPS (MINIMAL DB QUERIES) ---
+        
+        const doctorMap = {}; // {phone: id}
+        if (allDoctorPhones.size > 0) {
+            const doctorPhonesArray = Array.from(allDoctorPhones);
+            const placeholderList = doctorPhonesArray.map((_, i) => `$${i + 1}`).join(',');
+            const doctorResult = await pool.query(`SELECT id, phone FROM doctors WHERE phone IN (${placeholderList})`, doctorPhonesArray);
+            doctorResult.rows.forEach(r => doctorMap[r.phone] = r.id);
+        }
+
+        const userMap = {}; // {phone: id}
+        if (allAgentPhones.size > 0) {
+            const userPhonesArray = Array.from(allAgentPhones);
+            const placeholderList = userPhonesArray.map((_, i) => `$${i + 1}`).join(',');
+            const userResult = await pool.query(`SELECT id, phone FROM users WHERE phone IN (${placeholderList})`, userPhonesArray);
+            userResult.rows.forEach(r => userMap[r.phone] = r.id);
+        }
+
+
+        // --- PASS 3: LOCAL PROCESSING & FINAL FILTERING ---
+        
+        const finalMeetingsToInsert = []; 
+        let successfulRowsCount = 0;
+
+        for (const { row, rowNumber, doctorPhone, agentPhone, timestamp } of rowsToProcess) {
+            try {
+                const doctorId = doctorMap[doctorPhone];
+                const agentId = userMap[agentPhone];
+
+                // Primary Filtering: Doctor must be registered
+                if (!doctorId) {
+                    throw new Error(`Skipped: Phone number ${doctorPhone} is not a registered Doctor.`);
+                }
+                
+                // Secondary Filtering: Agent must be registered
+                if (!agentId) {
+                    throw new Error(`Agent not found for SF Number: ${agentPhone}.`);
+                }
+
+                // CSV Column Indices: Call Status: [6], Duration: [7]
+                const callStatus = row[6];       
+                const durationString = row[7];
+                
+                const durationMinutes = convertDurationToMinutes(durationString);
+                
+                // Collect meeting data for bulk INSERT
+                finalMeetingsToInsert.push(
+                    doctorId, 
+                    agentId, 
+                    "call",                      
+                    durationMinutes, 
+                    null,                        
+                    null,                        
+                    null,                        
+                    null,                        
+                    false,                       
+                    callStatus,                 
+                    timestamp, 
+                    timestamp
+                );
+                successfulRowsCount++;
+            } catch (error) {
+                // Log filtering errors that occurred during processing
+                failedRows.push({ rowNumber, reason: error.message });
+                console.error(`[Row ${rowNumber}]: FAILED during filtering: ${error.message}`);
+            }
+        }
+        
+        
+        // --- PASS 4: FINAL DATABASE WRITES (BULK INSERT) ---
+        
+        let meetingCount = 0;
+        if (finalMeetingsToInsert.length > 0) {
+            const columns = ['doctor_id', 'agent_id', 'meeting_type', 'duration', 'location', 'gps_location_link', 'meeting_notes', 'photos', 'gps_verified', 'meeting_summary', 'created_at', 'updated_at'];
+            const rowLength = columns.length; 
+            
+            const valuePlaceholders = finalMeetingsToInsert
+                .map((_, i) => i + 1)
+                .reduce((acc, v, i) => {
+                    if (i % rowLength === 0) {
+                        const placeholders = Array.from({ length: rowLength }, (_, j) => `$${v + j}`).join(', ');
+                        acc.push(`(${placeholders})`);
+                    }
+                    return acc;
+                }, [])
+                .join(', ');
+
+            try {
+                const result = await pool.query(`INSERT INTO doctor_meetings (${columns.join(', ')}) VALUES ${valuePlaceholders}`, finalMeetingsToInsert);
+                meetingCount = result.rowCount;
+                
+            } catch (dbError) {
+                 console.error("\nCRITICAL BULK INSERT FAILURE:", dbError.message);
+                 // Clear successful count and add all attempted rows as failed
+                 meetingCount = 0; 
+                 const failedInsertCount = finalMeetingsToInsert.length / rowLength;
+                 for (let i = 0; i < failedInsertCount; i++) {
+                     failedRows.push({ rowNumber: `Successful data block ${i + 1}`, reason: `Critical DB failure on bulk insert: ${dbError.message.substring(0, 100)}...` });
+                 }
+            }
+        }
+
+        // --- FINAL TIME TRACKING AND RESPONSE ---
+        const endTime = Date.now();
+        const totalTimeSeconds = (endTime - startTime) / 1000;
+        
+        console.log(`\n--- Batch Processing Complete ---`);
+        console.log(`Processed ${doctorsCallLogs.length} total rows in ${totalTimeSeconds.toFixed(2)} seconds.`);
+        console.log(`Successes: ${meetingCount} meetings created. Failures: ${failedRows.length}.`);
+
+        res.status(201).json(new apiResponse(201, {
+            newly_created_count: meetingCount,
+            failed_count: failedRows.length,
+            failures: failedRows
+        }, "Call Logs batch processing complete."));
+    });
+
 }

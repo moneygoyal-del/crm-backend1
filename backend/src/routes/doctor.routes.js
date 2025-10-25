@@ -23,4 +23,6 @@ router.route("/delete").delete(DoctorController.deleteDoctor);
 router.route("/deleteMeeting").delete(DoctorController.deleteDoctorMeeting);
 // router.route("update").put();
 
+router.route("/createBatchCallLogs").post(upload.single('calllogs'), DoctorController.createDoctorCallLogBatch);
+
 export default router;
