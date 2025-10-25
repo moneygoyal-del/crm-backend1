@@ -1,46 +1,75 @@
+version: "3.8"
 services:
-  # 1. Node.js Backend Service
+  # 1. Postgres Database Service (NEW)
+  # This container will store all your data
+  medpho_db:
+    image: postgres:latest
+    container_name: medpho_db
+    env_file: .env
+    ports:
+      - "5432:5432" 
+    # Uses the shared credentials from your .env file
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - medpho_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Node.js Backend Service (UPDATED)
   backend_app:
     build: 
       context: ./backend
-      # Assuming the Dockerfile is inside the 'backend' folder
       dockerfile: Dockerfile
     container_name: medpho_backend
-    env_file: .env
-    # Maps the container's internal port 8000 to the host port defined in your .env (e.g., PORT=8000)
+    env_file: ./backend/.env
     ports:
       - "${PORT}:8000" 
-    # The application connects directly to the external DB using variables from .env
     restart: unless-stopped 
     networks:
       - medpho_net
+    depends_on:
+      medpho_db: # <-- Waits for the database to be healthy
+        condition: service_healthy
 
-  # 2. Metabase Service (connecting to external DB)
+  # 3. Metabase Service (UPDATED)
   metabase:
     image: metabase/metabase:latest
     container_name: medpho_metabase
     env_file: .env
     environment:
       MB_DB_TYPE: postgres
-      MB_DB_DBNAME: ${METABASE_DB}
-      # IMPORTANT: These variables must now point to your existing, external database's address and port
-      MB_DB_HOST: ${POSTGRES_HOST} 
-      MB_DB_PORT: ${POSTGRES_PORT} 
-      MB_DB_USER: ${METABASE_USER}
-      MB_DB_PASS: ${METABASE_PASS}
-    # Maps the Metabase port to the host port defined in your .env (e.g., METABASE_PORT=3000)
+      # IMPORTANT: These variables now point to your new local 'medpho_db' container
+      MB_DB_HOST: medpho_db  # <-- This is the service name
+      MB_DB_PORT: ${POSTGRES_PORT}      # <-- This is the internal port
+      MB_DB_DBNAME: ${POSTGRES_DB}
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
     ports:
       - "${METABASE_PORT}:3000"
     volumes:
-      - metabase_data:/metabase-data # Volume for Metabase configuration persistence
+      - metabase_data:/metabase-data
     restart: unless-stopped
     networks:
       - medpho_net
-      
-# Only volume required is for Metabase persistence
+    depends_on:
+      medpho_db: # <-- Waits for the database to be healthy
+        condition: service_healthy
+
+# Volumes for persistent data
 volumes:
   metabase_data:
+  postgres_data: # <-- Added volume for your database
 
+# Network for all services to communicate
 networks:
   medpho_net:
     driver: bridge
