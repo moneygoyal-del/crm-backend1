@@ -33,13 +33,11 @@ services:
     container_name: medpho_backend
     env_file: ./backend/.env
     ports:
-      - "${PORT}:8000" 
+      - "9001:8000"
     restart: unless-stopped 
     networks:
       - medpho_net
-    depends_on:
-      medpho_db: # <-- Waits for the database to be healthy
-        condition: service_healthy
+    
 
   # 3. Metabase Service (UPDATED)
   metabase:
