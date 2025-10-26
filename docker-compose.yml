@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   # 1. Postgres Database Service (NEW)
   # This container will store all your data
@@ -14,7 +13,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # *** CHANGE MADE HERE ***
+      # Mount the volume to the parent directory, NOT the /data subdirectory
+      - postgres_data:/var/lib/postgresql 
     networks:
       - medpho_net
     restart: unless-stopped
