@@ -178,7 +178,7 @@ export default class patientLeadController {
                 }
                 if(!tentative_visit_date) throw new Error("Invalid Tentative Visit Date format.");
                 
-                const created_at = new Date().toISOString(); 
+                const created_at = processTimeStamp(row[12]); 
                 const appointment_date = tentative_visit_date.split("T")[0];  
     
                 // Collect values for the bulk insert query
