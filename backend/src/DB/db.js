@@ -1,16 +1,30 @@
 import {Pool} from "pg"
 import 'dotenv/config'
 
-const pool = new Pool({
+// --- START FIX for "SSL/TLS required" ---
+
+// 1. Base config for all environments
+const dbConfig = {
     user: process.env.POSTGRES_USER,
     host: process.env.POSTGRES_HOST,
     database: process.env.POSTGRES_DB,
     password: process.env.POSTGRES_PASSWORD,
     port: process.env.POSTGRES_PORT,
-    // --- ADD THIS LINE TO SET THE DEFAULT SCHEMA FOR ALL CONNECTIONS ---
-    options: `-c search_path=crm,public` 
-    // ------------------------------------------------------------------
-});
+    options: `-c search_path=crm,public`
+};
+
+// 2. If NODE_ENV is "production" (like on Render), enable SSL
+if (process.env.NODE_ENV === "production") {
+  dbConfig.ssl = {
+    rejectUnauthorized: false
+  };
+}
+
+// 3. Create the pool with our new dynamic config
+const pool = new Pool(dbConfig);
+
+// --- END FIX ---
+
 
 const connectDB = async () => {
     try {
