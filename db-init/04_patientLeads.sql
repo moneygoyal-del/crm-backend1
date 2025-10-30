@@ -1,3 +1,5 @@
+SET search_path=crm,public;
+
 CREATE TABLE patient_leads (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     patient_name VARCHAR(100) NOT NULL,

@@ -315,8 +315,8 @@ export default class doctorController {
     });
 
    
-    // BATCH: Create Doctor Batch and Meetings 
-    createDoctorBatchAndMeetings = asyncHandler(async (req, res, next) => {
+// BATCH: Create Doctor Batch and Meetings (CHUNKED & ERROR-HANDLED)
+createDoctorBatchAndMeetings = asyncHandler(async (req, res, next) => {
     const file = req.file;
     if (!file) throw new apiError(400, "No file uploaded.");
 
@@ -391,7 +391,7 @@ export default class doctorController {
     const newDoctorInserts = []; 
     const updateDoctorUpdates = []; 
     const meetingsToInsert = [];    
-    const createdDoctorIds = {};    // {phone: id or placeholder}
+    const createdDoctorIds = {}; // {phone: id or placeholder}
     
     let processedDoctorsCount = 0;
     let updatedDoctorsCount = 0;
@@ -414,34 +414,41 @@ export default class doctorController {
             const meeting_notes = row[8];
             const meeting_summary = row[11];
             
-            const existingDoc = doctorMap[phone];
+            // --- START FIX for "duplicate key" ---
+            // Check if we have ALREADY processed this phone number in this batch
+            if (!createdDoctorIds[phone]) {
+                // This is the first time we've seen this phone number.
+                // Decide if it's a NEW doctor or an UPDATE to an existing one.
+                const existingDoc = doctorMap[phone];
 
-            if (existingDoc) {
-                // UPDATE DOCTOR: Prepare data for parallel execution
-                let NDM = existingDoc.assigned_agent_id_offline;
-                let newOnboarding = new Date(existingDoc.onboarding_date) < timestamp ? existingDoc.onboarding_date : timestamp;
-                let newLastMeeting = new Date(existingDoc.last_meeting) > timestamp ? existingDoc.last_meeting : timestamp;
-                
-                if (new Date(existingDoc.last_meeting) <= timestamp) NDM = NDM_id; 
-                
-                updateDoctorUpdates.push({
-                    query: `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, gps_location_link = $4, updated_at = $6, assigned_agent_id_offline = $7 WHERE phone = $5`,
-                    params: [newOnboarding, newLastMeeting, locationJson, gps_location_link, phone, timestamp, NDM],
-                });
-                createdDoctorIds[phone] = existingDoc.id;
-                updatedDoctorsCount++;
+                if (existingDoc) {
+                    // UPDATE existing doctor
+                    let NDM = existingDoc.assigned_agent_id_offline;
+                    let newOnboarding = new Date(existingDoc.onboarding_date) < timestamp ? existingDoc.onboarding_date : timestamp;
+                    let newLastMeeting = new Date(existingDoc.last_meeting) > timestamp ? existingDoc.last_meeting : timestamp;
+                    if (new Date(existingDoc.last_meeting) <= timestamp) NDM = NDM_id;
 
-            } else {
-                // NEW DOCTOR: Collect data for bulk INSERT
-                const doctorIdPlaceholder = 'NEW_ID_' + phone; 
-                newDoctorInserts.push(
-                    fullName, phone, locationJson, gps_location_link, timestamp, timestamp, NDM_id
-                );
-                createdDoctorIds[phone] = doctorIdPlaceholder; 
-                processedDoctorsCount++;
+                    updateDoctorUpdates.push({
+                        query: `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, gps_location_link = $4, updated_at = $6, assigned_agent_id_offline = $7 WHERE phone = $5`,
+                        params: [newOnboarding, newLastMeeting, locationJson, gps_location_link, phone, timestamp, NDM],
+                    });
+                    createdDoctorIds[phone] = existingDoc.id; // Store real ID
+                    updatedDoctorsCount++;
+
+                } else {
+                    // NEW doctor
+                    newDoctorInserts.push(
+                        fullName, phone, locationJson, gps_location_link, timestamp, timestamp, NDM_id
+                    );
+                    createdDoctorIds[phone] = 'NEW_ID_' + phone; // Store placeholder ID
+                    processedDoctorsCount++;
+                }
             }
+            // --- END FIX ---
             
-            // Collect meeting data, using ID placeholder for new doctors
+            // By this point, createdDoctorIds[phone] is guaranteed to be set
+            
+            // Collect meeting data, using ID from our map
             meetingsToInsert.push({
                 doctorId: createdDoctorIds[phone], 
                 NDM_id, duration, locationJson, gps_location_link, meeting_notes, photosJSON, meeting_summary, timestamp
@@ -454,30 +461,30 @@ export default class doctorController {
     }
     
     
-    // --- PASS 4: FINAL DATABASE WRITES (ASYNCHRONOUSLY) ---
+    // --- PASS 4: FINAL DATABASE WRITES (CHUNKED) ---
     
     // 1. Execute parallel Doctor UPDATES (for existing doctors)
     const updatePromises = updateDoctorUpdates.map(u => pool.query(u.query, u.params));
     await Promise.all(updatePromises);
     
-    // 2. Execute BULK INSERT for NEW Doctors and get their new IDs
+    // 2. Execute BULK INSERT for NEW Doctors (Chunked)
     let insertedDoctorIds = {}; // {phone: actual_uuid}
-    if (newDoctorInserts.length > 0) {
-        const columns = ['first_name', 'phone', 'location', 'gps_location_link', 'onboarding_date', 'last_meeting', 'assigned_agent_id_offline'];
-        const rowLength = columns.length; 
-        
-        const valuePlaceholders = newDoctorInserts
-            .map((_, i) => i + 1)
-            .reduce((acc, v, i) => {
-                if (i % rowLength === 0) {
-                    const placeholders = Array.from({ length: rowLength }, (_, j) => `$${v + j}`).join(', ');
-                    acc.push(`(${placeholders})`);
-                }
-                return acc;
-            }, [])
-            .join(', ');
+    const doctorChunkSize = 5000; // 5000 rows * 7 cols = 35,000 params (under 65k limit)
+    const doctorColumns = ['first_name', 'phone', 'location', 'gps_location_link', 'onboarding_date', 'last_meeting', 'assigned_agent_id_offline'];
+    const doctorRowLength = doctorColumns.length;
 
-        const newDoctorResult = await pool.query(`INSERT INTO doctors (${columns.join(', ')}) VALUES ${valuePlaceholders} RETURNING id, phone`, newDoctorInserts);
+    for (let i = 0; i < newDoctorInserts.length; i += doctorRowLength * doctorChunkSize) {
+        const chunk = newDoctorInserts.slice(i, i + doctorRowLength * doctorChunkSize);
+        if (chunk.length === 0) continue;
+
+        const valuePlaceholders = [];
+        const totalRows = chunk.length / doctorRowLength;
+        for (let j = 0; j < totalRows; j++) {
+            const placeholders = Array.from({ length: doctorRowLength }, (_, k) => `$${j * doctorRowLength + k + 1}`).join(', ');
+            valuePlaceholders.push(`(${placeholders})`);
+        }
+        
+        const newDoctorResult = await pool.query(`INSERT INTO doctors (${doctorColumns.join(', ')}) VALUES ${valuePlaceholders.join(', ')} RETURNING id, phone`, chunk);
         newDoctorResult.rows.forEach(r => { insertedDoctorIds[r.phone] = r.id; });
     }
 
@@ -497,25 +504,25 @@ export default class doctorController {
         }
     });
 
-    // 4. Execute BULK INSERT for Meetings
+    // 4. Execute BULK INSERT for Meetings (Chunked)
     let meetingCount = 0;
-    if (finalMeetingsToInsert.length > 0) {
-        const columns = ['doctor_id', 'agent_id', 'meeting_type', 'duration', 'location', 'gps_location_link', 'meeting_notes', 'photos', 'gps_verified', 'meeting_summary', 'created_at', 'updated_at'];
-        const rowLength = columns.length; 
-        
-        const valuePlaceholders = finalMeetingsToInsert
-            .map((_, i) => i + 1)
-            .reduce((acc, v, i) => {
-                if (i % rowLength === 0) {
-                    const placeholders = Array.from({ length: rowLength }, (_, j) => `$${v + j}`).join(', ');
-                    acc.push(`(${placeholders})`);
-                }
-                return acc;
-            }, [])
-            .join(', ');
+    const meetingChunkSize = 5000; // 5000 rows * 12 cols = 60,000 params (under 65k limit)
+    const meetingColumns = ['doctor_id', 'agent_id', 'meeting_type', 'duration', 'location', 'gps_location_link', 'meeting_notes', 'photos', 'gps_verified', 'meeting_summary', 'created_at', 'updated_at'];
+    const meetingRowLength = meetingColumns.length;
 
-        const result = await pool.query(`INSERT INTO doctor_meetings (${columns.join(', ')}) VALUES ${valuePlaceholders}`, finalMeetingsToInsert);
-        meetingCount = result.rowCount;
+    for (let i = 0; i < finalMeetingsToInsert.length; i += meetingRowLength * meetingChunkSize) {
+        const chunk = finalMeetingsToInsert.slice(i, i + meetingRowLength * meetingChunkSize);
+        if (chunk.length === 0) continue;
+
+        const valuePlaceholders = [];
+        const totalRows = chunk.length / meetingRowLength;
+        for (let j = 0; j < totalRows; j++) {
+            const placeholders = Array.from({ length: meetingRowLength }, (_, k) => `$${j * meetingRowLength + k + 1}`).join(', ');
+            valuePlaceholders.push(`(${placeholders})`);
+        }
+        
+        const result = await pool.query(`INSERT INTO doctor_meetings (${meetingColumns.join(', ')}) VALUES ${valuePlaceholders.join(', ')}`, chunk);
+        meetingCount += result.rowCount;
     }
 
     // --- FINAL TIME TRACKING AND RESPONSE ---
@@ -532,7 +539,7 @@ export default class doctorController {
         failed_count: failedRows.length,
         failures: failedRows
     }, "Batch processing complete."));
-    });
+});
 
     // BATCH: Create Online Doctors 
     createOnlineDoctors = asyncHandler(async (req, res, next) => {
