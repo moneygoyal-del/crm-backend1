@@ -20,8 +20,8 @@ export default class patientLeadController {
         // --- Data Processing and Validation ---
         hospital_name = processString(hospital_name);
 
-        if (!refree_phone_no || !ndm_contact || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference || !tentative_visit_dateRaw) {
-            throw new apiError(400, "Missing required fields: referee phone, NDM contact, patient name/phone, medical condition, hospital name, booking reference, or tentative visit date.");
+        if (!refree_phone_no || !ndm_contact || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference ) {
+            throw new apiError(400, "Missing required fields: referee phone, NDM contact, patient name/phone, medical condition, hospital name, or booking reference.");
         }
 
         // Process phone numbers 
@@ -42,10 +42,7 @@ export default class patientLeadController {
         const patient_diposition_last_update = processTimeStamp(patient_diposition_last_updateRaw || created_at);
         const tentative_visit_date = processTimeStamp(tentative_visit_dateRaw);
 
-        if (!tentative_visit_date) {
-            throw new apiError(400, "Invalid Tentative Visit Date format.");
-        }
-        const appointment_date = tentative_visit_date.split("T")[0];
+        const appointment_date = tentative_visit_date ? tentative_visit_date.split("T")[0] : null;
 
         // --- Dependency Lookups ---
 
@@ -183,10 +180,9 @@ export default class patientLeadController {
                 if (!booking_reference || !hospital_name || !medical_condition || !patient_phone) {
                     throw new Error("Missing required fields: Booking Reference, Hospital, Medical Condition, or Patient Phone.");
                 }
-                if (!tentative_visit_date) throw new Error("Invalid Tentative Visit Date format.");
-
+                
                 const created_at = processTimeStamp(row[12]);
-                const appointment_date = tentative_visit_date.split("T")[0];
+                const appointment_date = tentative_visit_date ? tentative_visit_date.split("T")[0] : null;
 
                 // ***MODIFICATION***: Push a row array, not flat values
                 validRowsToInsert.push([
@@ -483,11 +479,12 @@ export default class patientLeadController {
 
         if (tentative_visit_date !== undefined && tentative_visit_date !== null) {
             const dateProcessed = processTimeStamp(tentative_visit_date);
+            
             const appointment_date = dateProcessed ? dateProcessed.split("T")[0] : null;
-            if (appointment_date) {
-                updateFields.push(`appointment_date = $${paramIndex++}`);
-                queryParams.push(appointment_date);
-            }
+            
+            
+            updateFields.push(`appointment_date = $${paramIndex++}`);
+            queryParams.push(appointment_date);
         }
 
         // Add mandatory updated_at field
@@ -533,26 +530,35 @@ export default class patientLeadController {
         if (!id && !booking_reference) {
             throw new apiError(400, "Provide id or booking reference of the OPD booking to delete");
         }
-
-        let query = "DELETE FROM opd_bookings WHERE ";
-        let params = [];
-
-        if (id) {
-            query += "id = $1";
-            params.push(id);
-        } else { // Use booking_reference
-            query += "booking_reference = $1";
-            params.push(booking_reference);
+        
+        // **FIX**: Must also delete from opd_dispositions_logs first to avoid foreign key violation
+        let opdId;
+        
+        // 1. Find the ID if only booking_reference is given
+        if (!id) {
+             const opdResult = await pool.query("SELECT id FROM opd_bookings WHERE booking_reference = $1", [booking_reference]);
+             if (opdResult.rows.length === 0) {
+                 throw new apiError(404, "OPD booking not found or already deleted.");
+             }
+             opdId = opdResult.rows[0].id;
+        } else {
+            opdId = id;
         }
 
-        query += " RETURNING id, booking_reference";
+        // 2. Delete dependent records from opd_dispositions_logs
+        await pool.query("DELETE FROM opd_dispositions_logs WHERE opd_booking_id = $1", [opdId]);
 
-        const deleteResult = await pool.query(query, params);
+        // 3. Delete the main opd_booking record
+        const deleteResult = await pool.query(
+            "DELETE FROM opd_bookings WHERE id = $1 RETURNING id, booking_reference",
+            [opdId]
+        );
 
         if (deleteResult.rowCount === 0) {
+            // This should ideally not be reached if the find-query above worked, but good as a safeguard.
             throw new apiError(404, "OPD booking not found or already deleted.");
         }
 
-        res.status(200).json(new apiResponse(200, deleteResult.rows[0], "OPD booking successfully deleted"));
+        res.status(200).json(new apiResponse(200, deleteResult.rows[0], "OPD booking and its disposition logs successfully deleted"));
     });
 }
