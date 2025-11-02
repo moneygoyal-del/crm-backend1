@@ -20,8 +20,8 @@ export default class patientLeadController {
         // --- Data Processing and Validation ---
         hospital_name = processString(hospital_name);
 
-        if (!refree_phone_no || !ndm_contact || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference || !tentative_visit_dateRaw) {
-            throw new apiError(400, "Missing required fields: referee phone, NDM contact, patient name/phone, medical condition, hospital name, booking reference, or tentative visit date.");
+        if (!refree_phone_no || !ndm_contact || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference ) {
+            throw new apiError(400, "Missing required fields: referee phone, NDM contact, patient name/phone, medical condition, hospital name or booking reference.");
         }
 
         // Process phone numbers 
@@ -42,9 +42,8 @@ export default class patientLeadController {
         const patient_diposition_last_update = processTimeStamp(patient_diposition_last_updateRaw || created_at);
         const tentative_visit_date = processTimeStamp(tentative_visit_dateRaw);
 
-        if (!tentative_visit_date) {
-            throw new apiError(400, "Invalid Tentative Visit Date format.");
-        }
+        if (!tentative_visit_date) tentative_visit_date = null;
+        
         const appointment_date = tentative_visit_date.split("T")[0];
 
         // --- Dependency Lookups ---
