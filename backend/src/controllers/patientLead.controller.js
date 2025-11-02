@@ -169,7 +169,7 @@ export default class patientLeadController {
                 const medical_condition = row[9];
                 const panel = row[10]; // Maps to payment_mode
                 const booking_reference = row[13];
-                const tentative_visit_date = processTimeStamp(row[14]);
+                let tentative_visit_date = processTimeStamp(row[14]);
                 const current_disposition = row[16];
                 const patient_diposition_last_update = processTimeStamp(row[17]);
 
@@ -183,7 +183,7 @@ export default class patientLeadController {
                 if (!booking_reference || !hospital_name || !medical_condition || !patient_phone) {
                     throw new Error("Missing required fields: Booking Reference, Hospital, Medical Condition, or Patient Phone.");
                 }
-                if (!tentative_visit_date) throw new Error("Invalid Tentative Visit Date format.");
+                if (!tentative_visit_date) tentative_visit_date = null;
 
                 const created_at = processTimeStamp(row[12]);
                 const appointment_date = tentative_visit_date.split("T")[0];
