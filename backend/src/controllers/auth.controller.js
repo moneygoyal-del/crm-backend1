@@ -28,8 +28,20 @@ export default class authController {
         }
         const userId = userResult.rows[0].id;
 
-        // 2. Generate and store OTP in the new 'otps' table
+        // 2. Generate OTP
         const otp = generateOTP();
+        const message = `Your Medpho login OTP is: ${otp}. Do not share this with anyone.`;
+
+        // 3. Send OTP via WhatsApp FIRST
+        try {
+            await sendWhatsAppMessage(phone_processed, message);
+        } catch (whatsappError) {
+            console.error("WhatsApp API failed:", whatsappError.message);
+            // Throw a user-friendly error instead of a generic 500
+            throw new apiError(502, "Failed to send OTP. Please check the phone number or try again later.");
+        }
+
+        // 4. ONLY if WhatsApp send was successful, store the OTP hash
         const otp_hash = await bcrypt.hash(otp, 10);
         const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10-minute expiry
 
@@ -37,10 +49,6 @@ export default class authController {
             "INSERT INTO otps (user_id, otp_hash, expires_at) VALUES ($1, $2, $3)",
             [userId, otp_hash, expires_at]
         );
-
-        // 3. Send OTP via WhatsApp
-        const message = `Your Medpho login OTP is: ${otp}. Do not share this with anyone.`;
-        await sendWhatsAppMessage(phone_processed, message);
 
         res.status(200).json(new apiResponse(200, null, "OTP sent successfully"));
     });
