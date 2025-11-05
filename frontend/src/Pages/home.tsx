@@ -1,14 +1,15 @@
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom'; // No useNavigate needed
 
 // Simple CSS-in-JS for styling
 const styles = {
+    // --- THE MISSING STYLES ARE NOW ADDED ---
     container: {
         width: '320px',
         margin: '50px auto',
         padding: '20px',
         border: '1px solid #555',
         borderRadius: '8px',
-        textAlign: 'center' as const, // <-- FIX 3
+        textAlign: 'center' as const,
         backgroundColor: '#333'
     },
     header: {
@@ -21,6 +22,11 @@ const styles = {
         borderTopRightRadius: '8px',
         margin: '-20px -20px 20px -20px'
     },
+    welcomeText: {
+        fontSize: '1.1em',
+        margin: '30px 0'
+    },
+    // --- END OF MISSING STYLES ---
     button: {
         width: '100%',
         padding: '12px',
@@ -30,25 +36,21 @@ const styles = {
         border: 'none',
         borderRadius: '4px',
         cursor: 'pointer',
-        fontSize: '1em'
-    },
-    welcomeText: {
-        fontSize: '1.1em',
-        margin: '30px 0'
+        fontSize: '1em',
+        textDecoration: 'none', 
+        display: 'block' 
     }
 };
 
 function Home() {
-  const navigate = useNavigate();
-
-  // Get user data saved during login
+  // No navigate variable needed here
   const userString = localStorage.getItem('user');
   const user = userString ? JSON.parse(userString) : { name: "User" };
 
   const handleLogout = () => {
     localStorage.removeItem('authToken');
     localStorage.removeItem('user');
-    navigate('/login');
+    window.location.href = '/login'; // Force reload
   };
 
   return (
@@ -59,13 +61,13 @@ function Home() {
         Welcome <strong>{user.name}</strong>
       </div>
       
-      <button style={styles.button}>
+      <Link to="/book-opd" style={styles.button}>
         Book OPD
-      </button>
+      </Link>
       
-      <button style={styles.button}>
+      <Link to="/log-meeting" style={styles.button}>
         Log Doctor Meeting
-      </button>
+      </Link>
 
       <button onClick={handleLogout} style={{ ...styles.button, backgroundColor: '#f44336', marginTop: '30px' }}>
         Logout

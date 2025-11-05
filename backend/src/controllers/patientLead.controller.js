@@ -5,6 +5,7 @@ import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
 import fs from "fs";
 import apiError from "../utils/apiError.utils.js";
+import { logToGoogleSheet } from "../utils/googleSheet.util.js";
 
 export default class patientLeadController {
 
@@ -560,5 +561,105 @@ export default class patientLeadController {
         }
 
         res.status(200).json(new apiResponse(200, deleteResult.rows[0], "OPD booking and its disposition logs successfully deleted"));
+    });
+
+    
+    createOpdBookingFromWeb = asyncHandler(async (req, res, next) => {
+        // Get user info from the JWT token
+        const loggedInUser = req.user; 
+        if (!loggedInUser) {
+            throw new apiError(401, "User not authenticated");
+        }
+        
+        // Get form data from the body
+        let {
+            hospital_name, refree_phone_no, patient_name, patient_phone,
+            age: _age, gender, medical_condition, panel,
+            booking_reference, tentative_visit_date: tentative_visit_dateRaw,
+            current_disposition, patient_diposition_last_update: patient_diposition_last_updateRaw
+        } = req.body;
+
+        // --- Data Processing and Validation ---
+        hospital_name = processString(hospital_name);
+
+        if (!refree_phone_no || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference ) {
+            throw new apiError(400, "Missing required fields: referee phone, patient name/phone, medical condition, hospital name, or booking reference.");
+        }
+
+        // Use the LOGGED IN USER'S phone number
+        const ndm_contact_processed = process_phone_no(loggedInUser.phone);
+        
+        const patient_phone_processed = process_phone_no(patient_phone);
+        const refree_phone_processed = process_phone_no(refree_phone_no);
+
+        // ... (rest of your existing validation for age, timestamps, etc.)
+        let age = null;
+        if (_age !== "N/A" && _age) {
+            const parsedAge = parseInt(_age, 10);
+            if (isNaN(parsedAge) || parsedAge < 0 || parsedAge > 120) {
+                age = null; // Don't throw error, just nullify
+            } else {
+                age = parsedAge;
+            }
+        }
+        const created_at = new Date().toISOString();
+        const patient_diposition_last_update = processTimeStamp(patient_diposition_last_updateRaw || created_at);
+        const tentative_visit_date = processTimeStamp(tentative_visit_dateRaw);
+        const appointment_date = tentative_visit_date ? tentative_visit_date.split("T")[0] : null;
+
+        // --- Dependency Lookups ---
+        const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [refree_phone_processed]);
+        if (doctor.rows.length === 0) {
+            throw new apiError(404, `Referee Doctor not found with phone: ${refree_phone_no}`);
+        }
+        const referee_id = doctor.rows[0].id; // <-- This variable is correct
+
+        // The agent ID comes directly from the logged-in user
+        const created_by_agent_id = loggedInUser.id;
+
+        // --- Database Insertion ---
+        //
+        // --- THIS IS THE FIX ---
+        // Changed "refree_id" to "referee_id" in the query
+        //
+        const newOPD = await pool.query(
+            "INSERT INTO opd_bookings (booking_reference,patient_name,patient_phone,age,gender,medical_condition,hospital_name,appointment_date,current_disposition,created_by_agent_id,last_interaction_date,source,referee_id,created_at,updated_at, payment_mode) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id, booking_reference, patient_name ",
+            [
+                booking_reference, patient_name, patient_phone_processed, age, gender, medical_condition,
+                hospital_name, appointment_date, current_disposition, created_by_agent_id,
+                patient_diposition_last_update, "doctor", referee_id, // <-- This $13 value is correct
+                created_at, created_at, panel
+            ]
+        );
+
+        if (!newOPD.rows || newOPD.rows.length === 0) {
+            throw new apiError(500, "Failed to create new OPD booking.");
+        }
+
+        // --- 1. RESPOND TO CLIENT (FAST) ---
+        res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
+
+        // --- 2. LOG TO GOOGLE SHEET (ASYNC) ---
+        const sheetRow = [
+            null, // [0]
+            hospital_name, // [1] hospital_name
+            ndm_contact_processed, // [2] ndm_contact
+            null, // [3]
+            refree_phone_no, // [4] refree_phone_no
+            patient_name, // [5] patient_name
+            patient_phone, // [6] patient_phone
+            _age, // [7] age
+            gender, // [8] gender
+            medical_condition, // [9] medical_condition
+            panel, // [10] panel
+            null, // [11]
+            created_at, // [12] created_at
+            booking_reference, // [13] booking_reference
+            tentative_visit_dateRaw, // [14] tentative_visit_date
+            null, // [15]
+            current_disposition, // [16] current_disposition
+            patient_diposition_last_updateRaw // [17] patient_diposition_last_update
+        ];
+        logToGoogleSheet("OPD_BOOKING", sheetRow);
     });
 }

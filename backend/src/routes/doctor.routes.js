@@ -1,6 +1,7 @@
 import { Router } from "express";
 import doctorController from "../controllers/doctor.controllers.js";
 import upload from "../middleware/multer.middleware.js";
+import { verifyJWT } from "../middleware/auth.middleware.js";
 
 const router = Router();
 const DoctorController = new doctorController();
@@ -24,5 +25,8 @@ router.route("/deleteMeeting").delete(DoctorController.deleteDoctorMeeting);
 // router.route("update").put();
 
 router.route("/createBatchCallLogs").post(upload.single('calllogs'), DoctorController.createDoctorCallLogBatch);
+
+
+router.route("/create-web").post(verifyJWT, DoctorController.createMeetingFromWeb);
 
 export default router;
