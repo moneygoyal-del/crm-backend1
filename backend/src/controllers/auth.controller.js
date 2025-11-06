@@ -6,18 +6,18 @@ import apiError from "../utils/apiError.utils.js";
 import { sendWhatsAppMessage } from "../utils/whatsapp.util.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { randomInt } from "crypto"; // <-- 1. IMPORT FROM NODE'S CRYPTO MODULE
+import { randomInt } from "crypto";
 
-// Helper function to generate a 6-digit OTP (Secure)
+// (Config and helper function are unchanged)
+const OTP_RATE_LIMIT_COUNT = 3;
+const OTP_RATE_LIMIT_WINDOW_MINUTES = 15;
 const generateOTP = () => {
-    // 2. USE randomInt FOR A CRYPTOGRAPHICALLY SECURE NUMBER
     return randomInt(100000, 1000000).toString();
 };
 
 export default class authController {
 
-    // --- 1. SEND OTP ---
-    // (This function is unchanged, but now uses the secure generateOTP)
+    // --- 1. SEND OTP (Updated with Transaction to Invalidate Old OTPs) ---
     sendOtp = asyncHandler(async (req, res) => {
         const { phone } = req.body;
         if (!phone) throw new apiError(400, "Phone number is required");
@@ -31,11 +31,25 @@ export default class authController {
         }
         const userId = userResult.rows[0].id;
 
-        // 2. Generate secure OTP
-        const otp = generateOTP(); // <-- This now calls the new secure function
+        // 2. CHECK RATE LIMIT
+        const rateLimitResult = await pool.query(
+            `SELECT COUNT(*) FROM otps 
+             WHERE user_id = $1 AND created_at > NOW() - INTERVAL '${OTP_RATE_LIMIT_WINDOW_MINUTES} minutes'`,
+            [userId]
+        );
+        const otpCount = parseInt(rateLimitResult.rows[0].count, 10);
+        if (otpCount >= OTP_RATE_LIMIT_COUNT) {
+            throw new apiError(
+                429, 
+                `Too many OTP requests. Please try again in ${OTP_RATE_LIMIT_WINDOW_MINUTES} minutes.`
+            );
+        }
+
+        // 3. Generate secure OTP
+        const otp = generateOTP();
         const message = `Your Medpho login OTP is: ${otp}. Do not share this with anyone.`;
 
-        // 3. Send OTP via WhatsApp FIRST
+        // 4. Send OTP via WhatsApp FIRST
         try {
             await sendWhatsAppMessage(phone_processed, message);
         } catch (whatsappError) {
@@ -43,20 +57,42 @@ export default class authController {
             throw new apiError(502, "Failed to send OTP. Please check the phone number or try again later.");
         }
 
-        // 4. ONLY if WhatsApp send was successful, store the OTP hash
+        // 5. --- NEW TRANSACTION LOGIC ---
+        // Once WhatsApp succeeds, hash the OTP and perform DB operations in a transaction.
         const otp_hash = await bcrypt.hash(otp, 10);
         const expires_at = new Date(Date.now() + 10 * 60 * 1000); // 10-minute expiry
 
-        await pool.query(
-            "INSERT INTO otps (user_id, otp_hash, expires_at) VALUES ($1, $2, $3)",
-            [userId, otp_hash, expires_at]
-        );
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            
+            // Step 5a: Invalidate all previous, un-used OTPs for this user
+            await client.query(
+                "UPDATE otps SET is_used = true WHERE user_id = $1 AND is_used = false",
+                [userId]
+            );
+
+            // Step 5b: Insert the new, valid OTP
+            await client.query(
+                "INSERT INTO otps (user_id, otp_hash, expires_at) VALUES ($1, $2, $3)",
+                [userId, otp_hash, expires_at]
+            );
+
+            // Step 5c: Commit the transaction
+            await client.query('COMMIT');
+        } catch (dbError) {
+            // If anything fails, roll back
+            await client.query('ROLLBACK');
+            throw new apiError(500, "Database error. Could not save OTP.", [], dbError.stack);
+        } finally {
+            client.release();
+        }
+        // --- END TRANSACTION LOGIC ---
 
         res.status(200).json(new apiResponse(200, null, "OTP sent successfully"));
     });
 
-    // --- 2. VERIFY OTP AND LOGIN (to create JWT) ---
-    // (This function is unchanged)
+    // --- 2. VERIFY OTP AND LOGIN (Unchanged from previous step) ---
     verifyOtp = asyncHandler(async (req, res) => {
         const { phone, otp } = req.body;
         if (!phone || !otp) throw new apiError(400, "Phone and OTP are required");
@@ -76,7 +112,7 @@ export default class authController {
         const otpResult = await pool.query(
             `SELECT id, otp_hash FROM otps 
              WHERE user_id = $1 AND expires_at > NOW() AND is_used = false
-             ORDER BY created_at DESC`, // Get the newest OTP
+             ORDER BY created_at DESC`, // Get the newest (and only valid) OTP
             [user.id]
         );
         
@@ -84,22 +120,24 @@ export default class authController {
             throw new apiError(401, "Invalid or expired OTP");
         }
 
-        // 3. Check the provided OTP against all valid hashes
-        let validOtpId = null;
+        // 3. Check the provided OTP.
+        // Since we invalidated old ones, there should only be one valid row.
+        // But looping is still safest.
+        let isOtpValid = false;
         for (const row of otpResult.rows) {
-            const isOtpValid = await bcrypt.compare(otp, row.otp_hash);
-            if (isOtpValid) {
-                validOtpId = row.id;
+            const didMatch = await bcrypt.compare(otp, row.otp_hash);
+            if (didMatch) {
+                isOtpValid = true;
                 break; // Found a match
             }
         }
         
-        if (!validOtpId) {
+        if (!isOtpValid) {
             throw new apiError(401, "Invalid or expired OTP");
         }
 
-        // 4. Mark the OTP as used
-        await pool.query("UPDATE otps SET is_used = true WHERE id = $1", [validOtpId]);
+        // 4. Delete ALL OTPs for this user for security and cleanup
+        await pool.query("DELETE FROM otps WHERE user_id = $1", [user.id]);
 
         // 5. Create the JWT Payload
         const payload = {
