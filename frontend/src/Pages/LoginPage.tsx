@@ -1,144 +1,231 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import api from '../api';
-import axios from 'axios';
-
-// (Styles are unchanged)
-const styles = {
-    container: { width: '320px', margin: '50px auto', padding: '20px', border: '1px solid #555', borderRadius: '8px', textAlign: 'left' as const, backgroundColor: '#333' },
-    header: { padding: '10px', backgroundColor: '#ccc', color: '#242424', fontWeight: 'bold', fontSize: '1.2em', borderRadius: '8px 8px 0 0', margin: '-20px -20px 20px -20px', textAlign: 'center' as const},
-    input: { width: '100%', padding: '10px', margin: '5px 0 15px 0', boxSizing: 'border-box' as const, borderRadius: '4px', border: '1px solid #777', backgroundColor: '#fff', color: 'black' },
-    button: { width: '100%', padding: '10px', marginTop: '10px', backgroundColor: '#008CBA', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1em' },
-    resendButton: { width: 'auto', padding: '5px 10px', marginTop: '5px', backgroundColor: 'transparent', color: '#00c1ff', border: 'none', cursor: 'pointer', fontSize: '0.9em' },
-    error: { color: 'red', margin: '10px 0', textAlign: 'center' as const, backgroundColor: '#ffdddd', border: '1px solid red', padding: '10px', borderRadius: '4px' },
-    success: { color: 'lightgreen', margin: '10px 0', textAlign: 'center' as const, backgroundColor: '#ddffdd', border: '1px solid green', padding: '10px', borderRadius: '4px' }
-};
-
-const CLIENT_COOLDOWN_SECONDS = 60;
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../api";
+import axios from "axios";
 
 export default function LoginPage() {
-    const [phone, setPhone] = useState('');
-    const [otp, setOtp] = useState('');
-    const [showOtpInput, setShowOtpInput] = useState(false);
-    const [loading, setLoading] = useState(false); // For Login button
-    const [resendLoading, setResendLoading] = useState(false); // <-- 1. NEW STATE
-    const [error, setError] = useState('');
-    const [countdown, setCountdown] = useState(0);
-    const navigate = useNavigate();
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [countdown, setCountdown] = useState(0);
+  const [isExiting, setIsExiting] = useState(false);
+  const navigate = useNavigate();
 
-    useEffect(() => {
-        if (countdown > 0) {
-            const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-            return () => clearTimeout(timer);
+  // Countdown effect
+  useEffect(() => {
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [countdown]);
+
+  // --- Validation ---
+  const validatePhone = (phone: string) => /^\d{10}$/.test(phone);
+  const validateOtp = (otp: string) => /^\d{4,6}$/.test(otp);
+
+  // --- Send OTP Handler ---
+  const handleSendOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError("");
+    setSuccess("");
+
+    if (!validatePhone(phone)) {
+      setError("Please enter a valid 10-digit phone number.");
+      return;
+    }
+
+    setResendLoading(true);
+    try {
+      await api.post(`/auth/send-otp`, { phone });
+      setShowOtpInput(true);
+      setSuccess("OTP sent successfully!");
+      setCountdown(60);
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        setError(err.response?.data?.message || "Failed to send OTP. Try again.");
+      } else {
+        setError("Unexpected error occurred.");
+      }
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  // --- Login Handler ---
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    if (!validateOtp(otp)) {
+      setError("Please enter a valid OTP.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await api.post(`/auth/verify-otp`, { phone, otp });
+      localStorage.setItem("authToken", response.data.data.token);
+      localStorage.setItem("user", JSON.stringify(response.data.data.user));
+
+      setSuccess("Login successful!");
+      setIsExiting(true);
+
+      // Smooth fade before redirect
+      setTimeout(() => navigate("/"), 400);
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        if (err.response?.status === 401) {
+          setError("Invalid OTP.");
+        } else {
+          setError("Login failed. Please try again.");
         }
-    }, [countdown]);
+      } else {
+        setError("Unexpected error occurred.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const handleSendOtp = async (e?: React.FormEvent) => {
-        if (e) e.preventDefault(); 
-        
-        // --- 2. USE THE NEW STATE ---
-        setResendLoading(true); 
-        setError('');
-        
-        try {
-            await api.post(`/auth/send-otp`, { phone });
-            setShowOtpInput(true);
-            setCountdown(CLIENT_COOLDOWN_SECONDS); 
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                if (err.response?.status === 429) {
-                    setError(err.response.data.message); 
-                } else if (err.response?.status === 404) {
-                    setError('User Not Found');
-                } else {
-                    setError('Failed to send OTP. Please try again.');
-                }
-            } else {
-                setError('An unexpected error occurred.');
-            }
-        }
-        setResendLoading(false); // <-- 2. USE THE NEW STATE ---
-    };
+  // --- Styles ---
+  const containerStyle: React.CSSProperties = {
+    width: "360px",
+    margin: "60px auto",
+    padding: "30px",
+    borderRadius: "12px",
+    backgroundColor: "#1e1e1e",
+    color: "#f5f5f5",
+    boxShadow: "0 4px 15px rgba(0, 0, 0, 0.4)",
+    fontFamily: "Inter, sans-serif",
+    transition: "opacity 0.4s ease, transform 0.4s ease",
+    opacity: isExiting ? 0 : 1,
+    transform: isExiting ? "translateY(-10px)" : "translateY(0)",
+  };
 
-    const handleLogin = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoading(true); // <-- This uses the main loading state
-        setError('');
+  const buttonStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "12px",
+    backgroundColor: "#00b4d8",
+    border: "none",
+    borderRadius: "6px",
+    color: "white",
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+  };
 
-        try {
-            const response = await api.post(`/auth/verify-otp`, { phone, otp });
-            localStorage.setItem('authToken', response.data.data.token);
-            localStorage.setItem('user', JSON.stringify(response.data.data.user));
-            navigate('/'); 
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                if (err.response?.status === 401) {
-                    setError('Invalid OTP');
-                } else {
-                    setError('Login failed. Please try again.');
-                }
-            } else {
-                setError('An unexpected error occurred.');
-            }
-        }
-        setLoading(false); // <-- This uses the main loading state
-    };
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "10px 12px",
+    marginBottom: "18px",
+    borderRadius: "6px",
+    border: "1px solid #666",
+    backgroundColor: "#2a2a2a",
+    color: "#f5f5f5",
+    outline: "none",
+    fontSize: "0.95rem",
+  };
 
-    return (
-        <div style={styles.container}>
-            <div style={styles.header}>Medpho Operator</div>
-            
-            {error && <div style={styles.error}>{error}</div>}
+  const messageStyle = (type: "error" | "success"): React.CSSProperties => ({
+    padding: "10px",
+    borderRadius: "6px",
+    textAlign: "center",
+    marginBottom: "15px",
+    backgroundColor: type === "error" ? "#ffdddd" : "#ddffdd",
+    color: type === "error" ? "#a10000" : "#007500",
+    border: type === "error" ? "1px solid #a10000" : "1px solid #007500",
+  });
 
-            {!showOtpInput ? (
-                // --- Login Screen 1 ---
-                <form onSubmit={handleSendOtp}>
-                    <h3 style={{ fontWeight: 'normal', textAlign: 'center' as const }}>Login Using Mobile</h3>
-                    <input
-                        type="tel"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        placeholder="Enter your phone number"
-                        style={styles.input}
-                        required
-                    />
-                    {/* --- 3. UPDATE DISABLED LOGIC --- */}
-                    <button type="submit" disabled={resendLoading} style={styles.button}>
-                        {resendLoading ? 'Sending...' : 'Send OTP'}
-                    </button>
-                </form>
-            ) : (
-                // --- OTP Verification Screen ---
-                <form onSubmit={handleLogin}>
-                    <h3 style={{ fontWeight: 'normal', textAlign: 'center' as const }}>Login Using Mobile</h3>
-                    <input type="tel" value={phone} style={styles.input} disabled />
-                    <input
-                        type="text"
-                        value={otp}
-                        onChange={(e) => setOtp(e.target.value)}
-                        placeholder="Enter OTP"
-                        style={styles.input}
-                        required
-                    />
+  return (
+    <div style={containerStyle}>
+      <h2 style={{ textAlign: "center", color: "#00b4d8", marginBottom: "25px" }}>Medpho Operator</h2>
 
-                    {/* --- 4. UPDATE RESEND BUTTON LOGIC --- */}
-                    <div style={{ textAlign: 'right' as const }}>
-                        <button 
-                            type="button" 
-                            onClick={() => handleSendOtp()}
-                            disabled={countdown > 0 || resendLoading} // <-- Check both states
-                            style={{...styles.resendButton, opacity: (countdown > 0 || resendLoading) ? 0.5 : 1}}
-                        >
-                            {resendLoading ? "Sending..." : (countdown > 0 ? `Resend OTP in ${countdown}s` : "Resend OTP")}
-                        </button>
-                    </div>
+      {error && <div style={messageStyle("error")}>{error}</div>}
+      {success && <div style={messageStyle("success")}>{success}</div>}
 
-                    {/* --- 5. UPDATE LOGIN BUTTON LOGIC --- */}
-                    <button type="submit" disabled={loading || resendLoading} style={styles.button}>
-                        {loading ? 'Logging in...' : 'Login'}
-                    </button>
-                </form>
-            )}
-        </div>
-    );
+      {!showOtpInput ? (
+        <form onSubmit={handleSendOtp}>
+          <label style={{ display: "block", marginBottom: "6px" }}>Mobile Number</label>
+          <input
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="Enter your 10-digit phone"
+            style={inputStyle}
+            maxLength={10}
+            autoFocus
+            required
+          />
+          <button
+            type="submit"
+            disabled={resendLoading}
+            style={{
+              ...buttonStyle,
+              opacity: resendLoading ? 0.6 : 1,
+              cursor: resendLoading ? "not-allowed" : "pointer",
+            }}
+          >
+            {resendLoading ? "Sending..." : "Send OTP"}
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleLogin}>
+          <label style={{ display: "block", marginBottom: "6px" }}>Phone Number</label>
+          <input type="tel" value={phone} style={inputStyle} disabled />
+
+          <label style={{ display: "block", marginBottom: "6px" }}>Enter OTP</label>
+          <input
+            type="text"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value)}
+            placeholder="Enter the OTP"
+            style={inputStyle}
+            maxLength={6}
+            autoFocus
+            required
+          />
+
+          <div style={{ textAlign: "right", marginBottom: "10px" }}>
+            <button
+              type="button"
+              onClick={() => handleSendOtp()}
+              disabled={countdown > 0 || resendLoading}
+              style={{
+                background: "none",
+                color: "#00b4d8",
+                border: "none",
+                fontSize: "0.9rem",
+                cursor: countdown > 0 || resendLoading ? "not-allowed" : "pointer",
+                opacity: countdown > 0 || resendLoading ? 0.6 : 1,
+              }}
+            >
+              {resendLoading
+                ? "Sending..."
+                : countdown > 0
+                ? `Resend OTP in ${countdown}s`
+                : "Resend OTP"}
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || resendLoading}
+            style={{
+              ...buttonStyle,
+              opacity: loading || resendLoading ? 0.6 : 1,
+              cursor: loading || resendLoading ? "not-allowed" : "pointer",
+            }}
+          >
+            {loading ? "Verifying..." : "Login"}
+          </button>
+        </form>
+      )}
+    </div>
+  );
 }
