@@ -894,6 +894,7 @@ export default class doctorController {
         }, "Call Logs batch processing complete."));
     });
     
+  
     createMeetingFromWeb = asyncHandler(async (req, res, next) => {
         // 1. Get user from JWT
         const loggedInUser = req.user;
@@ -911,7 +912,6 @@ export default class doctorController {
             comments_by_ndm,
             chances_of_getting_leads,
             timestamp_of_the_meeting, // e.g., "31/10/2025 14:30:00"
-            // Image links are omitted, can be added later
         } = req.body;
 
         // 3. Use logged-in user's name
@@ -940,11 +940,9 @@ export default class doctorController {
             [phone]
         );
         
-        // NDM ID comes from the logged-in user
         let NDM = loggedInUser.id; 
 
         if (existingDoctor?.rows?.length > 0) {
-            // ... (Same update logic as createDoctorByName)
             const doc = existingDoctor.rows[0];
             let newOnboarding = new Date(doc.onboarding_date) < new Date(timestamp) ? doc.onboarding_date : timestamp;
             let newLastMeeting = new Date(doc.last_meeting) > new Date(timestamp) ? doc.last_meeting : timestamp;
@@ -957,7 +955,6 @@ export default class doctorController {
                 [ newOnboarding, newLastMeeting, locationJson, phone, timestamp, NDM ]
             );
         } else {
-            // ... (Same insert logic as createDoctorByName)
             await pool.query(
                 `INSERT INTO doctors (first_name, phone, location, onboarding_date, last_meeting, assigned_agent_id_offline) VALUES ($1, $2, $3, $4, $5, $6)`,
                 [ fullName, phone, locationJson, timestamp, timestamp, NDM ]
@@ -965,14 +962,19 @@ export default class doctorController {
         }
 
         const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [phone]);
-        if (doctor?.rows[0]?.length == 0) throw new apiError(500, "Error creating doctor.");
+        
+       
+        if (doctor.rows.length === 0) {
+            throw new apiError(500, "Error creating doctor.");
+        }
+        
         
         // INSERT NEW MEETING RECORD
         const meeting = await pool.query(
             "INSERT INTO doctor_meetings (doctor_id,agent_id,meeting_type,duration,location,meeting_notes,gps_verified,meeting_summary,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,agent_id,doctor_id",
             [
-                doctor?.rows[0]?.id, NDM, "physical", duration_of_meeting,
-                locationJson, queries_by_the_doctor, false, // GPS not verified from web
+                doctor.rows[0].id, NDM, "physical", duration_of_meeting,
+                locationJson, queries_by_the_doctor, false, 
                 chances_of_getting_leads, timestamp, timestamp
             ]
         );
@@ -981,24 +983,12 @@ export default class doctorController {
         res.status(201).json(new apiResponse(201, { ...meeting.rows[0], doctor_name: fullName }, "Doctor and meeting successfully created"));
 
         // --- 6. LOG TO GOOGLE SHEET (ASYNC) ---
-        // Format this array to match your Doctor Meeting sheet columns
         const [date_of_meeting, time_of_meeting] = timestamp_of_the_meeting.split(' ');
         const sheetRow = [
             ndm_name, doctor_name, doctor_phone_number, locality,
-            null, // facilities
-            null, // opd_count
-            duration_of_meeting,
-            null, // numPatientsDuringMeeting
-            queries_by_the_doctor,
-            null, // rating
-            comments_by_ndm,
-            chances_of_getting_leads,
-            null, // clinic_image_link
-            null, // selfie_image_link
-            null, // gps_location
-            date_of_meeting,
-            time_of_meeting,
-            timestamp_of_the_meeting
+            null, null, duration_of_meeting, null, queries_by_the_doctor,
+            null, comments_by_ndm, chances_of_getting_leads, null, null, null,
+            date_of_meeting, time_of_meeting, timestamp_of_the_meeting
         ];
         logToGoogleSheet("DOCTOR_MEETING", sheetRow);
     });
