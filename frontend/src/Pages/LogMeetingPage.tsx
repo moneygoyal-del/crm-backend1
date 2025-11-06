@@ -3,15 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import axios from 'axios';
 
-// (Re-using the same styles as BookOpdPage)
+// (Styles with 'as const' to satisfy TypeScript)
 const styles = {
     container: { width: '320px', margin: '50px auto', padding: '20px', border: '1px solid #555', borderRadius: '8px', textAlign: 'left' as const, backgroundColor: '#333' },
     header: { padding: '10px', backgroundColor: '#ccc', color: '#242424', fontWeight: 'bold', fontSize: '1.2em', borderRadius: '8px 8px 0 0', margin: '-20px -20px 20px -20px', textAlign: 'center' as const},
     input: { width: '100%', padding: '10px', margin: '5px 0 15px 0', boxSizing: 'border-box' as const, borderRadius: '4px', border: '1px solid #777', backgroundColor: '#fff', color: 'black' },
     button: { width: '100%', padding: '10px', marginTop: '10px', backgroundColor: '#008CBA', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1em' },
     label: { fontWeight: 'bold', fontSize: '0.9em' },
-    error: { color: 'red', margin: '10px 0' },
-    success: { color: 'lightgreen', margin: '10px 0' },
+    labelRequired: { fontWeight: 'bold', fontSize: '0.9em', '::after': { content: '" *"', color: 'red' } },
+    error: { color: 'red', margin: '10px 0', textAlign: 'center' as const, backgroundColor: '#ffdddd', border: '1px solid red', padding: '10px', borderRadius: '4px' },
+    success: { color: 'lightgreen', margin: '10px 0', textAlign: 'center' as const, backgroundColor: '#ddffdd', border: '1px solid green', padding: '10px', borderRadius: '4px' },
     backLink: { color: 'cyan', cursor: 'pointer', textAlign: 'center' as const, display: 'block', marginTop: '15px' }
 };
 
@@ -51,9 +52,14 @@ export default function LogMeetingPage() {
             return;
         }
 
-        // Format date for the backend (must match processTimeStamp)
-        const date = new Date(formData.timestamp_of_the_meeting);
-        const formattedTimestamp = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.toTimeString().split(' ')[0]}`;
+       
+        const localDateStr = formData.timestamp_of_the_meeting.replace(/-/g, '/');
+        const date = new Date(localDateStr);
+        // Get current local time for the timestamp
+        const localTime = new Date().toTimeString().split(' ')[0]; 
+
+        const formattedTimestamp = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${localTime}`;
+        // --- END OF FIX ---
 
         const payload = {
             ...formData,
@@ -93,10 +99,10 @@ export default function LogMeetingPage() {
             {success && <div style={styles.success}>{success}</div>}
 
             <form onSubmit={handleSubmit}>
-                <label style={styles.label}>Doctor's Name*</label>
+                <label style={styles.labelRequired}>Doctor's Name*</label>
                 <input style={styles.input} type="text" name="doctor_name" value={formData.doctor_name} onChange={handleChange} />
                 
-                <label style={styles.label}>Doctor's Phone*</label>
+                <label style={styles.labelRequired}>Doctor's Phone*</label>
                 <input style={styles.input} type="tel" name="doctor_phone_number" value={formData.doctor_phone_number} onChange={handleChange} />
                 
                 <label style={styles.label}>Locality</label>
