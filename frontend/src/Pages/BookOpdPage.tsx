@@ -247,7 +247,7 @@ export default function BookOpdPage() {
         <fieldset style={styles.fieldset}>
           <legend style={styles.legend}>Referral & Case Details</legend>
 
-          <label style={styles.label}>Referee Name (for Sheet)</label>
+          <label style={styles.label}>Referee Name</label>
           <input style={styles.input} type="text" name="referee_name" value={formData.referee_name} onChange={handleChange} />
 
           <label style={styles.labelRequired}>Referee Doctor's Phone*</label>
