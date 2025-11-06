@@ -3,13 +3,11 @@ import { useNavigate } from "react-router-dom";
 import api from "../api";
 import axios from "axios";
 
-// --- Helper functions ---
 const getTodayDate = () => new Date().toISOString().split("T")[0];
 const getCurrentTime = () => new Date().toTimeString().split(" ")[0].substring(0, 5);
 
 export default function BookOpdPage() {
   const navigate = useNavigate();
-
   const [formData, setFormData] = useState({
     booking_reference: `WEB-${Date.now()}`,
     patient_name: "",
@@ -30,8 +28,6 @@ export default function BookOpdPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [fade, setFade] = useState(false);
-
   const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
   const minTime = useMemo(() => {
@@ -39,7 +35,6 @@ export default function BookOpdPage() {
     return formData.appointment_date === today ? getCurrentTime() : "00:00";
   }, [formData.appointment_date]);
 
-  // Auto-update time validation
   useEffect(() => {
     if (formData.appointment_date === getTodayDate()) {
       const now = getCurrentTime();
@@ -49,28 +44,18 @@ export default function BookOpdPage() {
     }
   }, [formData.appointment_date, formData.appointment_time]);
 
-  // --- Form change handler ---
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // --- Submit handler ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccess("");
     setLoading(true);
 
-    if (
-      !formData.patient_name ||
-      !formData.patient_phone ||
-      !formData.refree_phone_no ||
-      !formData.hospital_name ||
-      !formData.medical_condition ||
-      !formData.appointment_date ||
-      !formData.appointment_time
-    ) {
+    if (!formData.patient_name || !formData.patient_phone || !formData.refree_phone_no || !formData.hospital_name || !formData.medical_condition || !formData.appointment_date || !formData.appointment_time) {
       setError("Please fill in all required (*) fields.");
       setLoading(false);
       return;
@@ -81,13 +66,8 @@ export default function BookOpdPage() {
     try {
       const res = await api.post("/patientLeads/create-web", payload);
       setSuccess(`✅ Booking ${res.data.data.booking_reference} created successfully.`);
-      setFade(true);
-
-      // Reset after fade animation
-      setTimeout(() => {
-        setFade(false);
-        setSuccess("");
-      }, 4000);
+      
+      setTimeout(() => setSuccess(""), 5000);
 
       setFormData({
         booking_reference: `WEB-${Date.now()}`,
@@ -116,195 +96,211 @@ export default function BookOpdPage() {
     }
   };
 
-  // --- Styles ---
-  const styles: Record<string, React.CSSProperties> = {
-    container: {
-      width: "400px",
-      margin: "40px auto",
-      padding: "30px",
-      borderRadius: "12px",
-      backgroundColor: "#1e1e1e",
-      color: "#f5f5f5",
-      fontFamily: "Inter, sans-serif",
-      boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
-      transition: "all 0.3s ease",
-    },
-    header: {
-      fontSize: "1.3em",
-      fontWeight: 600,
-      textAlign: "center",
-      marginBottom: "20px",
-      color: "#00b4d8",
-    },
-    fieldset: {
-      border: "1px solid #444",
-      borderRadius: "8px",
-      marginBottom: "20px",
-      padding: "15px",
-    },
-    legend: {
-      color: "#00b4d8",
-      padding: "0 8px",
-      fontWeight: "bold",
-    },
-    label: { fontWeight: 500, display: "block", marginBottom: "5px" },
-    labelRequired: {
-      fontWeight: 500,
-      display: "block",
-      marginBottom: "5px",
-      color: "#ff6868",
-    },
-    input: {
-      width: "100%",
-      padding: "10px",
-      marginBottom: "15px",
-      borderRadius: "6px",
-      border: "1px solid #666",
-      backgroundColor: "#2b2b2b",
-      color: "#f5f5f5",
-      outline: "none",
-      transition: "border-color 0.2s ease",
-    },
-    splitRow: { display: "flex", gap: "10px" },
-    splitCol: { flex: 1 },
-    button: {
-      width: "100%",
-      padding: "12px",
-      backgroundColor: "#00b4d8",
-      border: "none",
-      borderRadius: "6px",
-      color: "white",
-      fontWeight: 600,
-      fontSize: "1em",
-      cursor: loading ? "not-allowed" : "pointer",
-      opacity: loading ? 0.6 : 1,
-      transition: "background-color 0.2s ease",
-    },
-    backLink: {
-      color: "#00b4d8",
-      cursor: "pointer",
-      textAlign: "center" as const,
-      display: "block",
-      marginTop: "15px",
-      textDecoration: "underline",
-      opacity: 0.8,
-    },
-    message: {
-      padding: "12px",
-      borderRadius: "8px",
-      marginBottom: "15px",
-      textAlign: "center" as const,
-      fontWeight: 500,
-      transition: "opacity 0.4s ease",
-      opacity: fade ? 0 : 1,
-    },
-    error: { background: "#ffdddd", color: "#a10000", border: "1px solid #a10000" },
-    success: { background: "#ddffdd", color: "#007500", border: "1px solid #007500" },
-  };
-
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>📋 Book New OPD</div>
-      <p style={{ textAlign: "center", marginTop: "-10px", marginBottom: "20px" }}>
-        Logged in as <strong>{user.name}</strong>
-      </p>
-
-      {error && <div style={{ ...styles.message, ...styles.error }}>{error}</div>}
-      {success && <div style={{ ...styles.message, ...styles.success }}>{success}</div>}
-
-      <form onSubmit={handleSubmit}>
-        {/* --- Patient Details --- */}
-        <fieldset style={styles.fieldset}>
-          <legend style={styles.legend}>Patient Details</legend>
-
-          <label style={styles.labelRequired}>Patient Name*</label>
-          <input style={styles.input} type="text" name="patient_name" value={formData.patient_name} onChange={handleChange} />
-
-          <label style={styles.labelRequired}>Patient Phone*</label>
-          <input style={styles.input} type="tel" name="patient_phone" maxLength={10} value={formData.patient_phone} onChange={handleChange} />
-
-          <label style={styles.label}>City</label>
-          <input style={styles.input} type="text" name="city" value={formData.city} onChange={handleChange} />
-
-          <div style={styles.splitRow}>
-            <div style={styles.splitCol}>
-              <label style={styles.label}>Age</label>
-              <input style={styles.input} type="number" name="age" value={formData.age} onChange={handleChange} />
-            </div>
-            <div style={styles.splitCol}>
-              <label style={styles.label}>Gender</label>
-              <select style={styles.input} name="gender" value={formData.gender} onChange={handleChange}>
-                <option value="">Select...</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="other">Other</option>
-              </select>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+      {/* Header */}
+      <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <button onClick={() => navigate(-1)} className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              <span className="font-medium">Back</span>
+            </button>
+            <div className="flex items-center space-x-2 text-sm text-gray-400">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              <span>{user.name}</span>
             </div>
           </div>
-        </fieldset>
+        </div>
+      </header>
 
-        {/* --- Referral & Case Details --- */}
-        <fieldset style={styles.fieldset}>
-          <legend style={styles.legend}>Referral & Case Details</legend>
-
-          <label style={styles.label}>Referee Name</label>
-          <input style={styles.input} type="text" name="referee_name" value={formData.referee_name} onChange={handleChange} />
-
-          <label style={styles.labelRequired}>Referee Doctor's Phone*</label>
-          <input style={styles.input} type="tel" name="refree_phone_no" maxLength={10} value={formData.refree_phone_no} onChange={handleChange} />
-
-          <label style={styles.labelRequired}>Hospital Name*</label>
-          <input style={styles.input} type="text" name="hospital_name" value={formData.hospital_name} onChange={handleChange} />
-
-          <label style={styles.labelRequired}>Medical Condition*</label>
-          <input style={styles.input} type="text" name="medical_condition" value={formData.medical_condition} onChange={handleChange} />
-
-          <label style={styles.label}>Payment Mode (Panel)</label>
-          <select style={styles.input} name="panel" value={formData.panel} onChange={handleChange}>
-            <option value="">Select...</option>
-            <option value="Cash">Cash</option>
-            <option value="Ayushman">Ayushman</option>
-          </select>
-        </fieldset>
-
-        {/* --- Appointment Details --- */}
-        <fieldset style={styles.fieldset}>
-          <legend style={styles.legend}>Appointment Details</legend>
-
-          <div style={styles.splitRow}>
-            <div style={styles.splitCol}>
-              <label style={styles.labelRequired}>Appointment Date*</label>
-              <input
-                style={styles.input}
-                type="date"
-                name="appointment_date"
-                value={formData.appointment_date}
-                onChange={handleChange}
-                min={getTodayDate()}
-              />
-            </div>
-            <div style={styles.splitCol}>
-              <label style={styles.labelRequired}>Appointment Time*</label>
-              <input
-                style={styles.input}
-                type="time"
-                name="appointment_time"
-                value={formData.appointment_time}
-                onChange={handleChange}
-                min={minTime}
-              />
+      {/* Main Content */}
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
+          {/* Page Header */}
+          <div className="bg-gradient-to-r from-cyan-500 to-blue-500 px-6 py-6">
+            <div className="flex items-center space-x-3">
+              <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+                <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Book OPD Appointment</h1>
+                <p className="text-cyan-100 text-sm">Schedule a new patient appointment</p>
+              </div>
             </div>
           </div>
-        </fieldset>
 
-        <button type="submit" style={styles.button} disabled={loading}>
-          {loading ? "Submitting..." : "Submit OPD Booking"}
-        </button>
+          {/* Alerts */}
+          <div className="px-6 pt-6">
+            {error && (
+              <div className="mb-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200 text-sm animate-shake">
+                <div className="flex items-center">
+                  <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                  {error}
+                </div>
+              </div>
+            )}
 
-        <a onClick={() => navigate(-1)} style={styles.backLink}>
-          ← Go Back
-        </a>
-      </form>
+            {success && (
+              <div className="mb-6 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">
+                <div className="flex items-center">
+                  <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  {success}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="p-6 space-y-6">
+            {/* Patient Details */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-white flex items-center">
+                <svg className="w-5 h-5 mr-2 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                Patient Details
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Patient Name <span className="text-red-400">*</span>
+                  </label>
+                  <input type="text" name="patient_name" value={formData.patient_name} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Enter patient name" required />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Patient Phone <span className="text-red-400">*</span>
+                  </label>
+                  <input type="tel" name="patient_phone" maxLength={10} value={formData.patient_phone} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="10-digit phone" required />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">City</label>
+                  <input type="text" name="city" value={formData.city} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Enter city" />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Age</label>
+                  <input type="number" name="age" value={formData.age} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Enter age" />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Gender</label>
+                  <select name="gender" value={formData.gender} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all">
+                    <option value="">Select gender</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Referral Details */}
+            <div className="space-y-4 pt-6 border-t border-gray-700">
+              <h3 className="text-lg font-semibold text-white flex items-center">
+                <svg className="w-5 h-5 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                Referral & Case Details
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Referee Name</label>
+                  <input type="text" name="referee_name" value={formData.referee_name} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Doctor name (for sheet)" />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Referee Doctor's Phone <span className="text-red-400">*</span>
+                  </label>
+                  <input type="tel" name="refree_phone_no" maxLength={10} value={formData.refree_phone_no} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="10-digit phone" required />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Hospital Name <span className="text-red-400">*</span>
+                  </label>
+                  <input type="text" name="hospital_name" value={formData.hospital_name} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Enter hospital name" required />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Medical Condition <span className="text-red-400">*</span>
+                  </label>
+                  <input type="text" name="medical_condition" value={formData.medical_condition} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Describe the medical condition" required />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Payment Mode (Panel)</label>
+                  <select name="panel" value={formData.panel} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all">
+                    <option value="">Select payment mode</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Ayushman">Ayushman</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Appointment Details */}
+            <div className="space-y-4 pt-6 border-t border-gray-700">
+              <h3 className="text-lg font-semibold text-white flex items-center">
+                <svg className="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Appointment Details
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Appointment Date <span className="text-red-400">*</span>
+                  </label>
+                  <input type="date" name="appointment_date" value={formData.appointment_date} onChange={handleChange} min={getTodayDate()} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" required />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Appointment Time <span className="text-red-400">*</span>
+                  </label>
+                  <input type="time" name="appointment_time" value={formData.appointment_time} onChange={handleChange} min={minTime} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" required />
+                </div>
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <div className="pt-6">
+              <button type="submit" disabled={loading} className="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
+                {loading ? (
+                  <span className="flex items-center justify-center">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Submitting...
+                  </span>
+                ) : (
+                  "Submit OPD Booking"
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </main>
     </div>
   );
 }
