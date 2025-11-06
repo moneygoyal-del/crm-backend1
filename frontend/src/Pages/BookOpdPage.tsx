@@ -3,13 +3,22 @@ import { useNavigate } from "react-router-dom";
 import api from "../api";
 import axios from "axios";
 
+// --- 1. NEW LEAD ID GENERATOR ---
+// Generates a 7-character random string (e.g., "pwhvOWF")
+const generateLeadId = () => {
+  return Math.random().toString(36).substring(2, 9);
+};
+// --- END NEW FUNCTION ---
+
 const getTodayDate = () => new Date().toISOString().split("T")[0];
 const getCurrentTime = () => new Date().toTimeString().split(" ")[0].substring(0, 5);
 
 export default function BookOpdPage() {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
-    booking_reference: `WEB-${Date.now()}`,
+    // --- 2. USE THE NEW FUNCTION ---
+    booking_reference: generateLeadId(),
+    // --- END CHANGE ---
     patient_name: "",
     patient_phone: "",
     referee_name: "",
@@ -70,7 +79,9 @@ export default function BookOpdPage() {
       setTimeout(() => setSuccess(""), 5000);
 
       setFormData({
-        booking_reference: `WEB-${Date.now()}`,
+        // --- 3. USE NEW FUNCTION ON RESET ---
+        booking_reference: generateLeadId(),
+        // --- END CHANGE ---
         patient_name: "",
         patient_phone: "",
         referee_name: "",
@@ -87,7 +98,15 @@ export default function BookOpdPage() {
       });
     } catch (err) {
       if (axios.isAxiosError(err)) {
-        setError(err.response?.data?.message || "An error occurred.");
+        // --- 4. HANDLE RARE DUPLICATE ID ERROR ---
+        if (err.response?.data?.message?.includes("duplicate key")) {
+            setError("A booking with this ID already exists. Please submit again.");
+            // Re-generate the ID so the user can resubmit
+            setFormData(prev => ({...prev, booking_reference: generateLeadId()}));
+        } else {
+            setError(err.response?.data?.message || "An error occurred.");
+        }
+        // --- END CHANGE ---
       } else {
         setError("Unexpected error occurred.");
       }
