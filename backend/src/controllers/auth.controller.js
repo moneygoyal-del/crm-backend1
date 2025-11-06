@@ -6,15 +6,18 @@ import apiError from "../utils/apiError.utils.js";
 import { sendWhatsAppMessage } from "../utils/whatsapp.util.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { randomInt } from "crypto"; // <-- 1. IMPORT FROM NODE'S CRYPTO MODULE
 
-// Helper function to generate a 6-digit OTP
+// Helper function to generate a 6-digit OTP (Secure)
 const generateOTP = () => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    // 2. USE randomInt FOR A CRYPTOGRAPHICALLY SECURE NUMBER
+    return randomInt(100000, 1000000).toString();
 };
 
 export default class authController {
 
     // --- 1. SEND OTP ---
+    // (This function is unchanged, but now uses the secure generateOTP)
     sendOtp = asyncHandler(async (req, res) => {
         const { phone } = req.body;
         if (!phone) throw new apiError(400, "Phone number is required");
@@ -28,8 +31,8 @@ export default class authController {
         }
         const userId = userResult.rows[0].id;
 
-        // 2. Generate OTP
-        const otp = generateOTP();
+        // 2. Generate secure OTP
+        const otp = generateOTP(); // <-- This now calls the new secure function
         const message = `Your Medpho login OTP is: ${otp}. Do not share this with anyone.`;
 
         // 3. Send OTP via WhatsApp FIRST
@@ -37,7 +40,6 @@ export default class authController {
             await sendWhatsAppMessage(phone_processed, message);
         } catch (whatsappError) {
             console.error("WhatsApp API failed:", whatsappError.message);
-            // Throw a user-friendly error instead of a generic 500
             throw new apiError(502, "Failed to send OTP. Please check the phone number or try again later.");
         }
 
@@ -54,6 +56,7 @@ export default class authController {
     });
 
     // --- 2. VERIFY OTP AND LOGIN (to create JWT) ---
+    // (This function is unchanged)
     verifyOtp = asyncHandler(async (req, res) => {
         const { phone, otp } = req.body;
         if (!phone || !otp) throw new apiError(400, "Phone and OTP are required");
