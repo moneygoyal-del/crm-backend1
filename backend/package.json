@@ -5,8 +5,8 @@
     "type": "module",
     "main": "src/index.js",
     "scripts": {
-        "start": "nodemon src/index.js"
-    },
+    "start": "nodemon --ignore sheet_queue.json src/index.js"
+  },
     "keywords": [
         "nodejs",
         "express",
