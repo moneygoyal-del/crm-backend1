@@ -1,0 +1,113 @@
+# This is your new render.yaml file
+services:
+  # 1. The PostgreSQL Database
+  - type: pserv
+    name: medpho-db
+    plan: free # Use 'starter' or higher for production
+    databaseName: ${POSTGRES_DB}
+    user: ${POSTGRES_USER}
+    # Note: Render will auto-generate a secure password for POSTGRES_PASSWORD
+
+  # 2. The Backend (Node.js)
+  - type: web
+    name: medpho-backend
+    plan: free # Use 'starter' or higher for production
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: PORT
+        value: 8000 # The internal port your app listens on
+      - key: NODE_ENV
+        value: production
+      # --- IMPORTANT ---
+      # You MUST add your other secrets here in the Render dashboard
+      # (JWT_SECRET, GOOGLE_SHEET_WEBHOOK_URL, GOOGLE_SHEET_SECRET_TOKEN, etc.)
+      #
+      # We also connect it to the database:
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: POSTGRES_USER
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: POSTGRES_DB
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: POSTGRES_PASSWORD
+      - fromService:
+          type: pserv
+          name: medpho-db
+          property: host
+          envVarKey: POSTGRES_HOST
+      - fromService:
+          type: pserv
+          name: medpho-db
+          property: port
+          envVarKey: POSTGRES_PORT
+
+  # 3. The Frontend (Nginx / React)
+  # This is the main service users will visit.
+  - type: web
+    name: medpho-frontend
+    plan: free # Use 'starter' or higher for production
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    # This sets the public port to 80
+    httpPort: 80
+    # Add a rewrite rule for React Router
+    rewrites:
+      - source: /*
+        destination: /index.html
+    # This service depends on the backend
+    envVars:
+      - key: NGINX_SERVER_NAME 
+        value: onrender.com
+    routes:
+      # --- This is the Nginx Proxy ---
+      # Any request to /api/... gets forwarded to the backend
+      - type: proxy
+        source: /api/*
+        destination: http://medpho-backend:8000/* # Uses the backend's internal name and port
+
+  # 4. Metabase
+  - type: web
+    name: medpho-metabase
+    plan: free # Use 'starter' or higher for production
+    runtime: image
+    image:
+      url: metabase/metabase:latest
+    # This sets the public port to 3000
+    httpPort: 3000
+    envVars:
+      - key: MB_DB_TYPE
+        value: postgres
+      # Connect Metabase to the same database
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: MB_DB_USER
+          property: user
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: MB_DB_DBNAME
+          property: database
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: MB_DB_PASS
+          property: password
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: MB_DB_HOST
+          property: host
+      - fromService:
+          type: pserv
+          name: medpho-db
+          envVarKey: MB_DB_PORT
+          property: port
