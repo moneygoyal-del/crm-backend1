@@ -1,11 +1,18 @@
 import { Router } from "express";
 import hospitalController from "../controllers/hospital.controller.js";
+import { verifyJWT } from "../middleware/auth.middleware.js"; 
+import upload from "../middleware/multer.middleware.js"; 
 
 const router = Router();
 const HospitalController = new hospitalController(); 
 
-// Public routes to get hospital data
 router.route("/cities").get(HospitalController.getAllCities);
 router.route("/by-city/:city").get(HospitalController.getHospitalsByCity);
+
+
+router.route("/create").post(HospitalController.createHospital);
+
+
+router.route("/create-batch").post(upload.single('hospitals'),HospitalController.createHospitalBatch);
 
 export default router;

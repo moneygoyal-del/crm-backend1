@@ -3,29 +3,31 @@ import { useNavigate } from "react-router-dom";
 import api from "../api";
 import axios from "axios";
 
-// --- 1. NEW LEAD ID GENERATOR ---
-// Generates a 7-character random string (e.g., "pwhvOWF")
+// --- Helper Functions ---
 const generateLeadId = () => {
   return Math.random().toString(36).substring(2, 9);
 };
-// --- END NEW FUNCTION ---
-
 const getTodayDate = () => new Date().toISOString().split("T")[0];
 const getCurrentTime = () => new Date().toTimeString().split(" ")[0].substring(0, 5);
 
 export default function BookOpdPage() {
   const navigate = useNavigate();
+
+  // --- 1. NEW STATE for the dropdown lists ---
+  const [cities, setCities] = useState<string[]>([]);
+  const [hospitals, setHospitals] = useState<string[]>([]);
+  const [isHospitalLoading, setIsHospitalLoading] = useState(false);
+  // --- END NEW STATE ---
+
   const [formData, setFormData] = useState({
-    // --- 2. USE THE NEW FUNCTION ---
     booking_reference: generateLeadId(),
-    // --- END CHANGE ---
     patient_name: "",
     patient_phone: "",
     referee_name: "",
     refree_phone_no: "",
-    hospital_name: "",
+    hospital_name: "", // This will now be a select
     medical_condition: "",
-    city: "",
+    city: "", // This will now be a select
     age: "",
     gender: "",
     panel: "",
@@ -53,9 +55,59 @@ export default function BookOpdPage() {
     }
   }, [formData.appointment_date, formData.appointment_time]);
 
+  // --- 2. NEW useEffect to fetch all cities ONCE on page load ---
+  useEffect(() => {
+    const fetchCities = async () => {
+      try {
+        const res = await api.get("/hospitals/cities");
+        setCities(res.data.data || []);
+      } catch (err) {
+        console.error("Failed to fetch cities:", err);
+      }
+    };
+    fetchCities();
+  }, []); // Empty array means run only once
+
+  // --- 3. NEW useEffect to fetch hospitals WHEN city changes ---
+  useEffect(() => {
+    // Clear hospital list if no city is selected
+    if (!formData.city) {
+      setHospitals([]);
+      return;
+    }
+
+    const fetchHospitals = async () => {
+      setIsHospitalLoading(true);
+      setHospitals([]); // Clear old hospital list
+      try {
+        const res = await api.get(`/hospitals/by-city/${formData.city}`);
+        setHospitals(res.data.data || []);
+      } catch (err) {
+        console.error("Failed to fetch hospitals:", err);
+      }
+      setIsHospitalLoading(false);
+    };
+    fetchHospitals();
+  }, [formData.city]); // This hook runs every time formData.city changes
+
+  // --- 4. UPDATE handleChange to reset hospital when city changes ---
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    
+    setFormData((prev) => {
+      // Start with the new state
+      const newState = {
+        ...prev,
+        [name]: value,
+      };
+
+      // If the user changed the city, THEN reset the hospital
+      if (name === 'city') {
+        newState.hospital_name = '';
+      }
+
+      return newState;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -64,7 +116,8 @@ export default function BookOpdPage() {
     setSuccess("");
     setLoading(true);
 
-    if (!formData.patient_name || !formData.patient_phone || !formData.refree_phone_no || !formData.hospital_name || !formData.medical_condition || !formData.appointment_date || !formData.appointment_time) {
+    // Added city to validation
+    if (!formData.patient_name || !formData.patient_phone || !formData.refree_phone_no || !formData.hospital_name || !formData.medical_condition || !formData.appointment_date || !formData.appointment_time || !formData.city) {
       setError("Please fill in all required (*) fields.");
       setLoading(false);
       return;
@@ -79,16 +132,14 @@ export default function BookOpdPage() {
       setTimeout(() => setSuccess(""), 5000);
 
       setFormData({
-        // --- 3. USE NEW FUNCTION ON RESET ---
         booking_reference: generateLeadId(),
-        // --- END CHANGE ---
         patient_name: "",
         patient_phone: "",
         referee_name: "",
         refree_phone_no: "",
         hospital_name: "",
         medical_condition: "",
-        city: "",
+        city: "", // Reset city
         age: "",
         gender: "",
         panel: "",
@@ -96,17 +147,15 @@ export default function BookOpdPage() {
         appointment_time: getCurrentTime(),
         current_disposition: "opd_booked",
       });
-    } catch (err) {
-      if (axios.isAxiosError(err)) {
-        // --- 4. HANDLE RARE DUPLICATE ID ERROR ---
+      setHospitals([]); // Clear hospital list
+    } catch (err: unknown) { // Use 'unknown' type
+      if (axios.isAxiosError(err)) { // Check if it's an Axios error
         if (err.response?.data?.message?.includes("duplicate key")) {
             setError("A booking with this ID already exists. Please submit again.");
-            // Re-generate the ID so the user can resubmit
             setFormData(prev => ({...prev, booking_reference: generateLeadId()}));
         } else {
             setError(err.response?.data?.message || "An error occurred.");
         }
-        // --- END CHANGE ---
       } else {
         setError("Unexpected error occurred.");
       }
@@ -207,16 +256,11 @@ export default function BookOpdPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">City</label>
-                  <input type="text" name="city" value={formData.city} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Enter city" />
-                </div>
-
-                <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Age</label>
                   <input type="number" name="age" value={formData.age} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Enter age" />
                 </div>
 
-                <div className="md:col-span-2">
+                <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Gender</label>
                   <select name="gender" value={formData.gender} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all">
                     <option value="">Select gender</option>
@@ -238,32 +282,64 @@ export default function BookOpdPage() {
               </h3>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* --- CITY DROPDOWN (MOVED HERE) --- */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    City <span className="text-red-400">*</span>
+                  </label>
+                  <select 
+                    name="city" 
+                    value={formData.city} 
+                    onChange={handleChange} 
+                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    required
+                  >
+                    <option value="">Select city...</option>
+                    {cities.map(city => (
+                      <option key={city} value={city}>{city}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* --- HOSPITAL DROPDOWN (MOVED HERE) --- */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Hospital Name <span className="text-red-400">*</span>
+                  </label>
+                  <select 
+                    name="hospital_name" 
+                    value={formData.hospital_name} 
+                    onChange={handleChange} 
+                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    disabled={!formData.city || isHospitalLoading} // Disable if no city or loading
+                    required
+                  >
+                    <option value="">{isHospitalLoading ? "Loading..." : (formData.city ? "Select hospital..." : "Select city first")}</option>
+                    {hospitals.map(hospital => (
+                      <option key={hospital} value={hospital}>{hospital}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                {/* (Referee fields) */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Referee Name</label>
                   <input type="text" name="referee_name" value={formData.referee_name} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Doctor name (for sheet)" />
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Referee Doctor's Phone <span className="text-red-400">*</span>
                   </label>
                   <input type="tel" name="refree_phone_no" maxLength={10} value={formData.refree_phone_no} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="10-digit phone" required />
                 </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Hospital Name <span className="text-red-400">*</span>
-                  </label>
-                  <input type="text" name="hospital_name" value={formData.hospital_name} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Enter hospital name" required />
-                </div>
-
+                
+                {/* (Medical Condition and Panel) */}
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Medical Condition <span className="text-red-400">*</span>
                   </label>
                   <input type="text" name="medical_condition" value={formData.medical_condition} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all" placeholder="Describe the medical condition" required />
                 </div>
-
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">Payment Mode (Panel)</label>
                   <select name="panel" value={formData.panel} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all">
