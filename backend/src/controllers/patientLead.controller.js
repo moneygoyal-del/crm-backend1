@@ -5,11 +5,11 @@ import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
 import fs from "fs";
 import apiError from "../utils/apiError.utils.js";
-import { logToGoogleSheet } from "../utils/googleSheet.util.js";
+import { addToSheetQueue } from "../utils/sheetQueue.util.js"; 
 
 export default class patientLeadController {
 
-    // --- CREATE SINGLE OPD BOOKING ---
+    
     createPatientLead = asyncHandler(async (req, res, next) => {
         let {
             hospital_name, ndm_contact, refree_phone_no, patient_name, patient_phone,
@@ -80,7 +80,106 @@ export default class patientLeadController {
         res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
     });
 
-    // --- BATCH UPLOAD OPD BOOKINGS ---
+    createOpdBookingFromWeb = asyncHandler(async (req, res, next) => {
+        // Get user info from the JWT token
+        const loggedInUser = req.user; 
+        if (!loggedInUser) {
+            throw new apiError(401, "User not authenticated");
+        }
+        
+        // 1. Destructure ALL fields from the form
+        let {
+            hospital_name, refree_phone_no, referee_name, patient_name, patient_phone,
+            city, age: _age, gender, medical_condition, panel,
+            booking_reference, appointment_date, appointment_time,
+            current_disposition
+        } = req.body;
+
+        // --- Data Processing and Validation ---
+        hospital_name = processString(hospital_name);
+
+        if (!refree_phone_no || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference || !appointment_date || !appointment_time) {
+            throw new apiError(400, "Missing required fields. Check all fields with *.");
+        }
+
+        // Use the LOGGED IN USER'S phone number and name
+        const ndm_contact_processed = process_phone_no(loggedInUser.phone);
+        const ndm_name = loggedInUser.first_name;
+        
+        const patient_phone_processed = process_phone_no(patient_phone);
+        const refree_phone_processed = process_phone_no(refree_phone_no);
+
+        let age = null;
+        if (_age !== "N/A" && _age) {
+            const parsedAge = parseInt(_age, 10);
+            if (!isNaN(parsedAge) && parsedAge > 0 && parsedAge < 120) {
+                age = parsedAge;
+            }
+        }
+        
+        const created_at = new Date().toISOString();
+        const last_interaction_date = created_at; // Set interaction date to now
+
+        // --- Dependency Lookups ---
+        const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [refree_phone_processed]);
+        if (doctor.rows.length === 0) {
+            throw new apiError(404, `Referee Doctor not found with phone: ${refree_phone_no}`);
+        }
+        const referee_id = doctor.rows[0].id;
+        const created_by_agent_id = loggedInUser.id;
+
+        // --- 2. Database Insertion (Uses new schema) ---
+        const newOPD = await pool.query(
+            `INSERT INTO opd_bookings (
+                booking_reference, patient_name, patient_phone, age, gender, 
+                medical_condition, hospital_name, appointment_date, appointment_time, 
+                current_disposition, created_by_agent_id, last_interaction_date, 
+                source, referee_id, created_at, updated_at, payment_mode
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
+            RETURNING id, booking_reference, patient_name`,
+            [
+                booking_reference, patient_name, patient_phone_processed, age, gender,
+                medical_condition, hospital_name, appointment_date, appointment_time,
+                current_disposition, created_by_agent_id, last_interaction_date,
+                "Doctor referral", referee_id, created_at, created_at, panel
+            ]
+        );
+
+        if (!newOPD.rows || newOPD.rows.length === 0) {
+            throw new apiError(500, "Failed to create new OPD booking.");
+        }
+
+        // --- 3. RESPOND TO CLIENT (FAST) ---
+        res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
+
+        // --- 4. ADD JOB TO QUEUE (INSTEAD OF CALLING API) ---
+        // (Order matches your Google Sheet headers)
+        const sheetRow = [
+            city,                           // [0] City
+            hospital_name,                  // [1] Hospitals
+            ndm_contact_processed,          // [2] NDM's Contact
+            referee_name,                   // [3] Referee Name
+            refree_phone_no,                // [4] Referee Phone Number
+            patient_name,                   // [5] Patient Name
+            patient_phone,                  // [6] Patient/Attendant Phone Number
+            _age,                           // [7] Patient Age
+            gender,                         // [8] Gender
+            medical_condition,              // [9] Medical Issue
+            panel,                          // [10] Panel
+            null,                           // [11] Credits (Not provided in form)
+            created_at,                     // [12] Timestamp
+            booking_reference,              // [13] Lead Identifier
+            `${appointment_date} ${appointment_time}`, // [14] Tentative Visit Date
+            "Doctor referral",              // [15] Source
+            current_disposition,            // [16] Disposition
+            last_interaction_date           // [17] Patient Disposition Last Update
+        ];
+        
+        addToSheetQueue("OPD_BOOKING", sheetRow);
+    });
+
+    
     createPatientLeadBatchUpload = asyncHandler(async (req, res, next) => {
         const file = req.file;
         if (!file) throw new apiError(400, "No file uploaded.");
@@ -201,7 +300,6 @@ export default class patientLeadController {
         // --- PHASE 4: BATCHED BULK INSERT ---
         let newlyCreatedCount = 0;
 
-        // ***MODIFICATION***: Use a transaction for all batches
         const client = await pool.connect();
 
         try {
@@ -213,8 +311,7 @@ export default class patientLeadController {
                 ];
                 const rowLength = columns.length; // 16 columns
 
-                // Define a batch size well under the limit
-                const BATCH_SIZE = 1000; // 1000 rows * 16 cols = 16,000 params (safe)
+                const BATCH_SIZE = 1000; 
 
                 await client.query('BEGIN'); // Start the transaction
 
@@ -224,7 +321,6 @@ export default class patientLeadController {
                     const batchRows = validRowsToInsert.slice(i, i + BATCH_SIZE);
                     const numRowsInBatch = batchRows.length;
 
-                    // Dynamically generate placeholders for this batch
                     const placeholderRows = [];
                     const batchValues = [];
                     let paramIndex = 1;
@@ -245,10 +341,7 @@ export default class patientLeadController {
                     VALUES ${valuePlaceholders}
                     RETURNING id
                 `;
-                    // Note: Added "ON CONFLICT... DO NOTHING" as an example of conflict handling.
-                    // Remove it if "booking_reference" is not unique or if you want it to fail.
 
-                    // Use the transactional client to run the query
                     const result = await client.query(bulkInsertQuery, batchValues);
                     newlyCreatedCount += result.rowCount;
 
@@ -260,7 +353,6 @@ export default class patientLeadController {
         } catch (error) {
             await client.query('ROLLBACK'); // Roll back on error
             console.error("Error during batch insert transaction:", error);
-            // Throw a generic error to be caught by asyncHandler
             throw new apiError(500, "Database insertion failed. All changes have been rolled back.", [], error.stack);
         } finally {
             client.release(); // Always release the client
@@ -285,7 +377,7 @@ export default class patientLeadController {
 
     });
 
-    // --- BATCH UPLOAD DISPOSITION LOGS  ---
+    
     createDispositionLogBatchUpload = asyncHandler(async (req, res, next) => {
         const file = req.file;
         if (!file) throw new apiError(400, "No file uploaded.");
@@ -300,14 +392,12 @@ export default class patientLeadController {
             }
         });
 
-        // --- OPTIMIZATION SETUP ---
         const logsToInsert = [];
         const failedRows = [];
         const uniqueCodes = [];
-        const opdMap = {}; // Map to store lookup results: {booking_reference: {id, medical_condition}}
+        const opdMap = {}; 
         const startTime = Date.now();
 
-        // 1. PHASE 1: Collect all unique booking references for bulk lookup
         for (const row of dispositionLogs) {
             if (row[0]) {
                 uniqueCodes.push(row[0]);
@@ -318,8 +408,6 @@ export default class patientLeadController {
             return res.status(201).json(new apiResponse(201, { newly_created_count: 0, failed_count: 0, failures: [] }, "No valid data to process."));
         }
 
-        // 2. PHASE 2: Perform BULK LOOKUP
-        // Construct placeholder string for the IN clause (e.g., $1, $2, $3, ...)
         const placeholderList = uniqueCodes.map((_, i) => `$${i + 1}`).join(', ');
 
         const bulkOpdResult = await pool.query(
@@ -327,16 +415,13 @@ export default class patientLeadController {
             uniqueCodes
         );
 
-        // Populate the lookup map for fast O(1) access inside the main loop
         bulkOpdResult.rows.forEach(row => {
             opdMap[row.booking_reference] = {
                 id: row.id,
                 medical_condition: row.medical_condition
             };
         });
-        // --- END OPTIMIZATION SETUP ---
 
-        // 3. PHASE 3: Loop and Collect Data for Bulk Insert
         for (const i in dispositionLogs) {
             const row = dispositionLogs[i];
             const rowNumber = Number(i) + 2;
@@ -353,7 +438,6 @@ export default class patientLeadController {
                     throw new Error("Missing Unique Code or Next Disposition (required fields).");
                 }
 
-                // Check lookup map instead of hitting the DB again
                 const opdData = opdMap[uniqueCode];
 
                 if (!opdData) {
@@ -362,7 +446,6 @@ export default class patientLeadController {
 
                 const created_at = processTimeStamp(timestampRaw);
 
-                // Collect all values into a single array for the final bulk insert
                 logsToInsert.push(
                     opdData.id,
                     initialDisposition,
@@ -381,7 +464,6 @@ export default class patientLeadController {
 
         let logsCreatedCount = 0;
 
-        // 4. PHASE 4: Perform BULK INSERT
         if (logsToInsert.length > 0) {
             const columns = [
                 'opd_booking_id', 'previous_disposition', 'new_disposition',
@@ -389,7 +471,6 @@ export default class patientLeadController {
             ];
             const rowLength = columns.length; // 7 columns per row
 
-            // Generate placeholders: ($1, $2, $3, ...), ($8, $9, $10, ...), ...
             const valuePlaceholders = logsToInsert
                 .map((_, i) => i + 1)
                 .reduce((acc, v, i) => {
@@ -410,14 +491,12 @@ export default class patientLeadController {
             logsCreatedCount = result.rowCount;
         }
 
-        // --- FINAL TIME TRACKING ---
         const endTime = Date.now();
         const totalTimeSeconds = (endTime - startTime) / 1000;
         console.log(`\n--- Batch Processing Complete ---`);
         console.log(`Processed ${dispositionLogs.length} rows in ${totalTimeSeconds.toFixed(2)} seconds.`);
         console.log(`Successes: ${logsCreatedCount}, Failures: ${failedRows.length}.`);
-        // ---------------------------
-
+        
         res.status(201).json(new apiResponse(201, {
             newly_created_count: logsCreatedCount,
             failed_count: failedRows.length,
@@ -426,7 +505,7 @@ export default class patientLeadController {
 
     });
 
-    // --- UPDATE SINGLE OPD BOOKING ---  Update by booking_reference
+    
     updatePatientLead = asyncHandler(async (req, res, next) => {
         let {
             id, booking_reference, patient_name, patient_phone, age: _age,
@@ -443,22 +522,19 @@ export default class patientLeadController {
         const queryParams = [];
         let paramIndex = 1;
 
-        // Helper function to add fields to update query
         const addField = (value, dbColumn) => {
             if (value !== undefined && value !== null) {
                 updateFields.push(`${dbColumn} = $${paramIndex++}`);
-                // Use processString for simple string fields that should be lowercased and trimmed
                 queryParams.push(['patient_name', 'gender', 'medical_condition', 'hospital_name', 'current_disposition'].includes(dbColumn) ? processString(value) : value);
             }
         };
 
-        // Standard field mapping
         addField(patient_name, 'patient_name');
         addField(gender, 'gender');
         addField(medical_condition, 'medical_condition');
         addField(hospital_name, 'hospital_name');
         addField(current_disposition, 'current_disposition');
-        addField(panel, 'payment_mode'); // Use 'panel' from request body, map to 'payment_mode' in DB
+        addField(panel, 'payment_mode');
 
         if (_age !== undefined && _age !== null) {
             let age = null;
@@ -480,24 +556,19 @@ export default class patientLeadController {
 
         if (tentative_visit_date !== undefined && tentative_visit_date !== null) {
             const dateProcessed = processTimeStamp(tentative_visit_date);
-            
             const appointment_date = dateProcessed ? dateProcessed.split("T")[0] : null;
-            
             
             updateFields.push(`appointment_date = $${paramIndex++}`);
             queryParams.push(appointment_date);
         }
 
-        // Add mandatory updated_at field
         updateFields.push(`updated_at = $${paramIndex++}`);
         queryParams.push(updated_at);
 
-        // Check if there's anything to update besides the timestamp
         if (updateFields.length === 1 && updateFields[0].includes('updated_at')) {
             throw new apiError(400, "No valid fields provided for update.");
         }
 
-        // Build WHERE clause
         let whereClause;
         if (id) {
             whereClause = `id = $${paramIndex++}`;
@@ -524,7 +595,7 @@ export default class patientLeadController {
     });
 
 
-    // --- DELETE SINGLE OPD BOOKING ---
+    
     deletePatientLead = asyncHandler(async (req, res, next) => {
         const { id, booking_reference } = req.body;
 
@@ -532,10 +603,8 @@ export default class patientLeadController {
             throw new apiError(400, "Provide id or booking reference of the OPD booking to delete");
         }
         
-        // **FIX**: Must also delete from opd_dispositions_logs first to avoid foreign key violation
         let opdId;
         
-        // 1. Find the ID if only booking_reference is given
         if (!id) {
              const opdResult = await pool.query("SELECT id FROM opd_bookings WHERE booking_reference = $1", [booking_reference]);
              if (opdResult.rows.length === 0) {
@@ -546,118 +615,17 @@ export default class patientLeadController {
             opdId = id;
         }
 
-        // 2. Delete dependent records from opd_dispositions_logs
         await pool.query("DELETE FROM opd_dispositions_logs WHERE opd_booking_id = $1", [opdId]);
 
-        // 3. Delete the main opd_booking record
         const deleteResult = await pool.query(
             "DELETE FROM opd_bookings WHERE id = $1 RETURNING id, booking_reference",
             [opdId]
         );
 
         if (deleteResult.rowCount === 0) {
-            // This should ideally not be reached if the find-query above worked, but good as a safeguard.
             throw new apiError(404, "OPD booking not found or already deleted.");
         }
 
         res.status(200).json(new apiResponse(200, deleteResult.rows[0], "OPD booking and its disposition logs successfully deleted"));
-    });
-
-    createOpdBookingFromWeb = asyncHandler(async (req, res, next) => {
-    // Get user info from the JWT token
-    const loggedInUser = req.user; 
-    if (!loggedInUser) {
-        throw new apiError(401, "User not authenticated");
-    }
-    
-    // 1. Destructure ALL fields from the form
-    let {
-        hospital_name, refree_phone_no, referee_name, patient_name, patient_phone,
-        city, age: _age, gender, medical_condition, panel,
-        booking_reference, appointment_date, appointment_time,
-        current_disposition
-    } = req.body;
-
-    // --- Data Processing and Validation ---
-    hospital_name = processString(hospital_name);
-
-    if (!refree_phone_no || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference || !appointment_date || !appointment_time) {
-        throw new apiError(400, "Missing required fields. Check all fields with *.");
-    }
-
-    // Use the LOGGED IN USER'S phone number
-    const ndm_contact_processed = process_phone_no(loggedInUser.phone);
-    
-    const patient_phone_processed = process_phone_no(patient_phone);
-    const refree_phone_processed = process_phone_no(refree_phone_no);
-
-    let age = null;
-    if (_age !== "N/A" && _age) {
-        const parsedAge = parseInt(_age, 10);
-        if (!isNaN(parsedAge) && parsedAge > 0 && parsedAge < 120) {
-            age = parsedAge;
-        }
-    }
-    
-    const created_at = new Date().toISOString();
-    const last_interaction_date = created_at; // Set interaction date to now
-
-    // --- Dependency Lookups ---
-    const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [refree_phone_processed]);
-    if (doctor.rows.length === 0) {
-        throw new apiError(404, `Referee Doctor not found with phone: ${refree_phone_no}`);
-    }
-    const referee_id = doctor.rows[0].id;
-    const created_by_agent_id = loggedInUser.id;
-
-    // --- 2. Database Insertion ---
-    const newOPD = await pool.query(
-        `INSERT INTO opd_bookings (
-            booking_reference, patient_name, patient_phone, age, gender, 
-            medical_condition, hospital_name, appointment_date, appointment_time, 
-            current_disposition, created_by_agent_id, last_interaction_date, 
-            source, referee_id, created_at, updated_at, payment_mode
-        ) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
-        RETURNING id, booking_reference, patient_name`,
-        [
-            booking_reference, patient_name, patient_phone_processed, age, gender,
-            medical_condition, hospital_name, appointment_date, appointment_time,
-            current_disposition, created_by_agent_id, last_interaction_date,
-            "Doctor referral", referee_id, created_at, created_at, panel
-        ]
-    );
-
-    if (!newOPD.rows || newOPD.rows.length === 0) {
-        throw new apiError(500, "Failed to create new OPD booking.");
-    }
-
-    // --- 3. RESPOND TO CLIENT (FAST) ---
-    res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
-
-    // --- 4. LOG TO GOOGLE SHEET (ASYNC) ---
-
-    const sheetRow = [
-        city,                           // [0] City
-        hospital_name,                  // [1] Hospitals
-        ndm_contact_processed,          // [2] NDM's Contact
-        referee_name,                   // [3] Referee Name
-        refree_phone_no,                // [4] Referee Phone Number
-        patient_name,                   // [5] Patient Name
-        patient_phone,                  // [6] Patient/Attendant Phone Number
-        _age,                           // [7] Patient Age
-        gender,                         // [8] Gender
-        medical_condition,              // [9] Medical Issue
-        panel,                          // [10] Panel
-        null,                           // [11] Credits (Not provided in form)
-        created_at,                     // [12] Timestamp
-        booking_reference,              // [13] Lead Identifier
-        `${appointment_date} ${appointment_time}`, // [14] Tentative Visit Date
-        "Doctor referral",              // [15] Source
-        current_disposition,            // [16] Disposition
-        last_interaction_date           // [17] Patient Disposition Last Update
-    ];
-    
-    logToGoogleSheet("OPD_BOOKING", sheetRow);
     });
 }

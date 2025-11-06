@@ -10,6 +10,8 @@ import userRouter from "./routes/user.routes.js";
 import doctorRouter from "./routes/doctor.routes.js";
 import patientLeadRouter from "./routes/patientLeads.routes.js";
 import authRouter from "./routes/auth.routes.js";
+import hospitalRouter from "./routes/hospital.routes.js";
+import { startSheetWorker } from "./utils/sheetQueue.util.js";
 
 const port = process.env.PORT || 8000;
 
@@ -55,11 +57,14 @@ connectDB()
   .then(() => {
     dbConnected = true;
 
+    startSheetWorker();
+
     // Register routers
     app.use("/api/v1/users", userRouter);
     app.use("/api/v1/doctors", doctorRouter);
     app.use("/api/v1/patientLeads", patientLeadRouter);
     app.use("/api/v1/auth", authRouter);
+    app.use("/api/v1/hospitals", hospitalRouter);
 
     // Root route
     app.get("/", (req, res) => {
