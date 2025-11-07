@@ -6,6 +6,7 @@ import readCsvFile from "../helper/read_csv.helper.js";
 import fs from "fs";
 import apiError from "../utils/apiError.utils.js";
 import { addToSheetQueue } from "../utils/sheetQueue.util.js"; 
+import { sendOpdNotifications } from "../utils/notification.util.js";
 
 export default class patientLeadController {
 
@@ -80,6 +81,7 @@ export default class patientLeadController {
         res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
     });
 
+  
     createOpdBookingFromWeb = asyncHandler(async (req, res, next) => {
         // Get user info from the JWT token
         const loggedInUser = req.user; 
@@ -102,7 +104,6 @@ export default class patientLeadController {
             throw new apiError(400, "Missing required fields. Check all fields with *.");
         }
 
-        // Use the LOGGED IN USER'S phone number and name
         const ndm_contact_processed = process_phone_no(loggedInUser.phone);
         const ndm_name = loggedInUser.first_name;
         
@@ -118,7 +119,7 @@ export default class patientLeadController {
         }
         
         const created_at = new Date().toISOString();
-        const last_interaction_date = created_at; // Set interaction date to now
+        const last_interaction_date = created_at;
 
         // --- Dependency Lookups ---
         const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [refree_phone_processed]);
@@ -128,7 +129,7 @@ export default class patientLeadController {
         const referee_id = doctor.rows[0].id;
         const created_by_agent_id = loggedInUser.id;
 
-        // --- 2. Database Insertion (Uses new schema) ---
+        // --- 2. Database Insertion ---
         const newOPD = await pool.query(
             `INSERT INTO opd_bookings (
                 booking_reference, patient_name, patient_phone, age, gender, 
@@ -151,32 +152,45 @@ export default class patientLeadController {
         }
 
         // --- 3. RESPOND TO CLIENT (FAST) ---
+        // We send the success response *before* running background tasks.
         res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
 
-        // --- 4. ADD JOB TO QUEUE (INSTEAD OF CALLING API) ---
-        // (Order matches your Google Sheet headers)
-        const sheetRow = [
-            city,                           // [0] City
-            hospital_name,                  // [1] Hospitals
-            ndm_contact_processed,          // [2] NDM's Contact
-            referee_name,                   // [3] Referee Name
-            refree_phone_no,                // [4] Referee Phone Number
-            patient_name,                   // [5] Patient Name
-            patient_phone,                  // [6] Patient/Attendant Phone Number
-            _age,                           // [7] Patient Age
-            gender,                         // [8] Gender
-            medical_condition,              // [9] Medical Issue
-            panel,                          // [10] Panel
-            null,                           // [11] Credits (Not provided in form)
-            created_at,                     // [12] Timestamp
-            booking_reference,              // [13] Lead Identifier
-            `${appointment_date} ${appointment_time}`, // [14] Tentative Visit Date
-            "Doctor referral",              // [15] Source
-            current_disposition,            // [16] Disposition
-            last_interaction_date           // [17] Patient Disposition Last Update
-        ];
-        
-        addToSheetQueue("OPD_BOOKING", sheetRow);
+        // --- 4. RUN BACKGROUND TASKS SAFELY ---
+        // We create a new async function and call it without 'await'.
+        // This 'detaches' it from the main request, so its errors
+        // won't be caught by the asyncHandler.
+        const runBackgroundTasks = async () => {
+            try {
+                // --- Task A: Add to Google Sheet Queue ---
+                const sheetRow = [
+                    city, hospital_name, ndm_contact_processed, referee_name, 
+                    refree_phone_no, patient_name, patient_phone, _age, gender, 
+                    medical_condition, panel, null, created_at, booking_reference, 
+                    `${appointment_date} ${appointment_time}`, "Doctor referral", 
+                    current_disposition, last_interaction_date
+                ];
+                await addToSheetQueue("OPD_BOOKING", sheetRow);
+
+                // --- Task B: Trigger WhatsApp Notifications ---
+                const notificationData = {
+                    ...req.body, // Use all form data
+                    booking_reference: newOPD.rows[0].booking_reference,
+                    ndm_phone: ndm_contact_processed,
+                    referee_phone: refree_phone_processed
+                };
+                await sendOpdNotifications(notificationData);
+
+            } catch (backgroundError) {
+                // If any background task fails, we just log it.
+                // We DON'T throw, so it won't crash the server.
+                console.error("--- BACKGROUND TASK FAILED (OPD Booking) ---");
+                console.error(backgroundError.message);
+                console.error("--- This did not stop the user's request. ---");
+            }
+        };
+
+        // Call the function to run in the background.
+        runBackgroundTasks();
     });
 
     

@@ -153,113 +153,115 @@ export default class doctorController {
         );
     });
 
-    // --- (THIS IS THE NEW FUNCTION FOR YOUR WEB APP) ---
-    createMeetingFromWeb = asyncHandler(async (req, res, next) => {
-        // 1. Get user from JWT
-        const loggedInUser = req.user;
-        if (!loggedInUser || !loggedInUser.first_name) {
-            throw new apiError(401, "User not authenticated or name is missing");
+    createOpdBookingFromWeb = asyncHandler(async (req, res, next) => {
+        // Get user info from the JWT token
+        const loggedInUser = req.user; 
+        if (!loggedInUser) {
+            throw new apiError(401, "User not authenticated");
         }
         
-        // 2. Get form data from body
-        const {
-            doctor_name,
-            doctor_phone_number,
-            locality,
-            duration_of_meeting,
-            queries_by_the_doctor,
-            comments_by_ndm,
-            chances_of_getting_leads,
-            timestamp_of_the_meeting, // e.g., "31/10/2025 14:30:00"
+        // 1. Destructure ALL fields from the form
+        let {
+            hospital_name, refree_phone_no, referee_name, patient_name, patient_phone,
+            city, age: _age, gender, medical_condition, panel,
+            booking_reference, appointment_date, appointment_time,
+            current_disposition
         } = req.body;
 
-        // 3. Use logged-in user's name
+        // --- Data Processing and Validation ---
+        hospital_name = processString(hospital_name);
+
+        if (!refree_phone_no || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference || !appointment_date || !appointment_time) {
+            throw new apiError(400, "Missing required fields. Check all fields with *.");
+        }
+
+        const ndm_contact_processed = process_phone_no(loggedInUser.phone);
         const ndm_name = loggedInUser.first_name;
-
-        if (!ndm_name || !doctor_phone_number) {
-            throw new apiError(400, "ndm name and doctor phone number are compulsory");
-        }
-
-        const timestamp = processTimeStamp(timestamp_of_the_meeting);
-        const phone = process_phone_no(doctor_phone_number);
-
-        if (!phone || !timestamp) {
-            throw new apiError(400, "Invalid phone or timestamp");
-        }
-
-        // 4. Run your existing logic from createDoctorByName
-        const { firstName, lastName } = processDoctorName(doctor_name);
-        const dr_name = firstName + " " + lastName;
-        const fullName = dr_name.trim();
-
-        const locationJson = JSON.stringify({ locality: locality });
-
-        const existingDoctor = await pool.query(
-            "SELECT id, onboarding_date, last_meeting, assigned_agent_id_offline FROM doctors WHERE phone = $1",
-            [phone]
-        );
         
-        let NDM = loggedInUser.id; 
+        const patient_phone_processed = process_phone_no(patient_phone);
+        const refree_phone_processed = process_phone_no(refree_phone_no);
 
-        if (existingDoctor?.rows?.length > 0) {
-            const doc = existingDoctor.rows[0];
-            let newOnboarding = new Date(doc.onboarding_date) < new Date(timestamp) ? doc.onboarding_date : timestamp;
-            let newLastMeeting = new Date(doc.last_meeting) > new Date(timestamp) ? doc.last_meeting : timestamp;
-            if (new Date(doc.last_meeting) > new Date(timestamp)) {
-                NDM = doc.assigned_agent_id_offline;
+        let age = null;
+        if (_age !== "N/A" && _age) {
+            const parsedAge = parseInt(_age, 10);
+            if (!isNaN(parsedAge) && parsedAge > 0 && parsedAge < 120) {
+                age = parsedAge;
             }
-
-            await pool.query(
-                `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, updated_at = $5, assigned_agent_id_offline = $6 WHERE phone = $4`,
-                [ newOnboarding, newLastMeeting, locationJson, phone, timestamp, NDM ]
-            );
-        } else {
-            await pool.query(
-                `INSERT INTO doctors (first_name, phone, location, onboarding_date, last_meeting, assigned_agent_id_offline) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [ fullName, phone, locationJson, timestamp, timestamp, NDM ]
-            );
         }
-
-        const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [phone]);
         
-        // --- (Bug fix from previous step) ---
+        const created_at = new Date().toISOString();
+        const last_interaction_date = created_at;
+
+        // --- Dependency Lookups ---
+        const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [refree_phone_processed]);
         if (doctor.rows.length === 0) {
-            throw new apiError(500, "Error creating doctor.");
+            throw new apiError(404, `Referee Doctor not found with phone: ${refree_phone_no}`);
         }
-        
-        // INSERT NEW MEETING RECORD
-        const meeting = await pool.query(
-            "INSERT INTO doctor_meetings (doctor_id,agent_id,meeting_type,duration,location,meeting_notes,gps_verified,meeting_summary,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,agent_id,doctor_id",
+        const referee_id = doctor.rows[0].id;
+        const created_by_agent_id = loggedInUser.id;
+
+        // --- 2. Database Insertion ---
+        const newOPD = await pool.query(
+            `INSERT INTO opd_bookings (
+                booking_reference, patient_name, patient_phone, age, gender, 
+                medical_condition, hospital_name, appointment_date, appointment_time, 
+                current_disposition, created_by_agent_id, last_interaction_date, 
+                source, referee_id, created_at, updated_at, payment_mode
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
+            RETURNING id, booking_reference, patient_name`,
             [
-                doctor.rows[0].id, NDM, "physical", duration_of_meeting,
-                locationJson, queries_by_the_doctor, false, // GPS not verified from web
-                chances_of_getting_leads, timestamp, timestamp
+                booking_reference, patient_name, patient_phone_processed, age, gender,
+                medical_condition, hospital_name, appointment_date, appointment_time,
+                current_disposition, created_by_agent_id, last_interaction_date,
+                "Doctor referral", referee_id, created_at, created_at, panel
             ]
         );
 
-        // --- 5. RESPOND TO CLIENT (FAST) ---
-        res.status(201).json(new apiResponse(201, { ...meeting.rows[0], doctor_name: fullName }, "Doctor and meeting successfully created"));
+        if (!newOPD.rows || newOPD.rows.length === 0) {
+            throw new apiError(500, "Failed to create new OPD booking.");
+        }
 
-        // --- 6. ADD JOB TO QUEUE (INSTEAD OF CALLING API) ---
-        const [date_of_meeting, time_of_meeting] = timestamp_of_the_meeting.split(' ');
-        const sheetRow = [
-            ndm_name, doctor_name, doctor_phone_number, locality,
-            null, // facilities
-            null, // opd_count
-            duration_of_meeting,
-            null, // numPatientsDuringMeeting
-            queries_by_the_doctor,
-            null, // rating
-            comments_by_ndm,
-            chances_of_getting_leads,
-            null, // clinic_image_link
-            null, // selfie_image_link
-            null, // gps_location
-            date_of_meeting,
-            time_of_meeting,
-            timestamp_of_the_meeting
-        ];
-        addToSheetQueue("DOCTOR_MEETING", sheetRow);
+        // --- 3. RESPOND TO CLIENT (FAST) ---
+        // We send the success response *before* running background tasks.
+        res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
+
+        // --- 4. RUN BACKGROUND TASKS SAFELY ---
+        // We create a new async function and call it without 'await'.
+        // This 'detaches' it from the main request, so its errors
+        // won't be caught by the asyncHandler.
+        const runBackgroundTasks = async () => {
+            try {
+                // --- Task A: Add to Google Sheet Queue ---
+                const sheetRow = [
+                    city, hospital_name, ndm_contact_processed, referee_name, 
+                    refree_phone_no, patient_name, patient_phone, _age, gender, 
+                    medical_condition, panel, null, created_at, booking_reference, 
+                    `${appointment_date} ${appointment_time}`, "Doctor referral", 
+                    current_disposition, last_interaction_date
+                ];
+                await addToSheetQueue("OPD_BOOKING", sheetRow);
+
+                // --- Task B: Trigger WhatsApp Notifications ---
+                const notificationData = {
+                    ...req.body, // Use all form data
+                    booking_reference: newOPD.rows[0].booking_reference,
+                    ndm_phone: ndm_contact_processed,
+                    referee_phone: refree_phone_processed
+                };
+                await sendOpdNotifications(notificationData);
+
+            } catch (backgroundError) {
+                // If any background task fails, we just log it.
+                // We DON'T throw, so it won't crash the server.
+                console.error("--- BACKGROUND TASK FAILED (OPD Booking) ---");
+                console.error(backgroundError.message);
+                console.error("--- This did not stop the user's request. ---");
+            }
+        };
+
+        // Call the function to run in the background.
+        runBackgroundTasks();
     });
 
     // --- THIS IS YOUR ORIGINAL FUNCTION (UNCHANGED) ---

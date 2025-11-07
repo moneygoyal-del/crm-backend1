@@ -5,8 +5,8 @@
     "type": "module",
     "main": "src/index.js",
     "scripts": {
-    "start": "nodemon --ignore sheet_queue.json src/index.js"
-  },
+        "start": "nodemon --ignore sheet_queue.json src/index.js"
+    },
     "keywords": [
         "nodejs",
         "express",
@@ -26,7 +26,8 @@
         "multer": "^2.0.2",
         "nodemon": "^3.1.10",
         "pg": "^8.10.0",
-        "prom-client": "^15.1.3"
+        "prom-client": "^15.1.3",
+        "qrcode": "^1.5.4"
     },
     "devDependencies": {
         "prettier": "3.6.2"
