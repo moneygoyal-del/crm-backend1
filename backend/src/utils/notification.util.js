@@ -1,13 +1,11 @@
 import axios from 'axios';
 import { pool } from '../DB/db.js';
 import { URLSearchParams } from 'url';
-import qrcode from 'qrcode';
+// We do not need the 'qrcode' library
 
-// --- 1. Reusable UltraMsg Function ---
+// --- 1. Reusable UltraMsg Function (Unchanged) ---
 const sendUltraMsg = async (to, body) => {
     const url = `https://api.ultramsg.com/${process.env.ULTRAMSG_INSTANCE}/messages/chat`;
-    
-    // UltraMsg (from your script) uses x-www-form-urlencoded
     const params = new URLSearchParams();
     params.append('token', process.env.ULTRAMSG_TOKEN);
     params.append('to', to);
@@ -23,19 +21,18 @@ const sendUltraMsg = async (to, body) => {
     }
 };
 
-// --- 2. Reusable AiSensy Function ---
+// --- 2. Reusable AiSensy Function (Unchanged) ---
 const sendAiSensy = async (to, name, mediaUrl) => {
     const url = 'https://backend.aisensy.com/campaign/t1/api/v2';
-    
     const payload = {
         "apiKey": process.env.AISENSY_API_KEY,
         "campaignName": process.env.AISENSY_CAMPAIGN_NAME,
-        "destination": `91${to}`, // Assumes 10-digit number
-        "userName": "Medpho 2842", // From your script
+        "destination": `91${to}`,
+        "userName": "Medpho 2842", 
         "templateParams": [name],
         "media": {
             "url": mediaUrl,
-            "filename": "patient-qr-code"
+            "filename": "patient-qr-code.png"
         }
     };
 
@@ -49,39 +46,62 @@ const sendAiSensy = async (to, name, mediaUrl) => {
     }
 };
 
-// --- 3. QR Code Generator ---
-// Generates a QR code as a Data URL (a base64 string)
-const generateQrDataUrl = async (patientData) => {
-    // This simple URL is just an example. You can build any URL you want.
-    // The key is that it contains the unique booking reference.
-    const patientUrl = `https://medpho.com/patient-info/?id=${patientData.booking_reference}`;
-    
+// --- 3. QR Code Generator (CORRECTED to match your Apps Script) ---
+const fetchQrCodeUrl = async (patientData) => {
+    // These URLs are copied directly from your Apps Script
+    const baseUrl = "https://medpho-public.s3.amazonaws.com/patientinformation/patient-information.html?";
+    const qrCodeUrlAPI = "https://backend.medpho.com/v1/qrCode/generateQRCode?url=";
+
+    // We build the URL with the same parameters as your script
+    const patientParams = new URLSearchParams({
+        name: patientData.patient_name,
+        age: patientData.age || "N/A",
+        gender: patientData.gender || "N/A",
+        credits: patientData.credits || "0", // Apps Script defaults to "0"
+        phoneNumber: patientData.patient_phone,
+        uniqueCode: patientData.booking_reference, // This is the new Unique ID
+        timeStamp: new Date().toISOString() // Live timestamp
+    });
+
+    const patientUrl = baseUrl + patientParams.toString();
+
+    // Build the final API call URL
+    const finalApiUrl = qrCodeUrlAPI + encodeURIComponent(patientUrl);
+
     try {
-        // This generates a base64 string, e.g., "data:image/png;base64,iVBORw0KGgo..."
-        return await qrcode.toDataURL(patientUrl);
+        // Fetch the QR code URL from your internal API
+        const response = await axios.get(finalApiUrl);
+        // Parse the response to get the location, just like your script
+        const qrCodeImageUrl = response.data.location;
+        
+        if (!qrCodeImageUrl) {
+            throw new Error("QR code API response did not contain a 'location' field.");
+        }
+        
+        return qrCodeImageUrl;
+
     } catch (err) {
-        console.error("Failed to generate QR code:", err);
+        console.error("Failed to generate QR code from Medpho API:", err.message);
         return null; // Return null if it fails
     }
 };
 
-// --- 4. The Main Notification Service ---
-// This one function will run all 5 notifications.
+// --- 4. The Main Notification Service (Updated to 'await' the new function) ---
 export const sendOpdNotifications = async (patientData) => {
     console.log(`Sending notifications for booking: ${patientData.booking_reference}`);
     
-    // We use Promise.allSettled so that one failed message doesn't
-    // stop the other messages from being sent.
     const notificationPromises = [];
 
     // --- Notification 1: Patient (AiSensy) ---
-    // Note: We generate a QR code data URL. This *should* work with AiSensy.
-    // If it doesn't, you may need to upload it to a public URL first.
-    const qrCodeUrl = await generateQrDataUrl(patientData);
+    // This now correctly calls your internal QR code API
+    const qrCodeUrl = await fetchQrCodeUrl(patientData);
+    
     if (qrCodeUrl) {
         notificationPromises.push(
             sendAiSensy(patientData.patient_phone, patientData.patient_name, qrCodeUrl)
         );
+    } else {
+        console.error("Skipping patient notification because QR code generation failed.");
     }
 
     // --- Notification 2: Hospital(s) (UltraMsg) ---
@@ -150,14 +170,11 @@ export const sendOpdNotifications = async (patientData) => {
         );
     }
 
-    // Wait for all messages to finish sending
     await Promise.allSettled(notificationPromises);
     console.log(`All notifications for ${patientData.booking_reference} have been processed.`);
 };
 
-/**
- * Helper to get the hospital's WhatsApp Group ID from our database.
- */
+// --- (Helper function is unchanged) ---
 const getHospitalGroupId = async (hospitalName) => {
     try {
         const result = await pool.query(
