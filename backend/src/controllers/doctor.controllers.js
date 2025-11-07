@@ -153,7 +153,7 @@ export default class doctorController {
         );
     });
 
-    // --- (THIS IS THE NEW FUNCTION FOR YOUR WEB APP) ---
+
     createMeetingFromWeb = asyncHandler(async (req, res, next) => {
         // 1. Get user from JWT
         const loggedInUser = req.user;
@@ -161,44 +161,26 @@ export default class doctorController {
             throw new apiError(401, "User not authenticated or name is missing");
         }
         
-        // 2. Get form data from body
+        // ... (all validation, DB inserts, and updates for doctor/meeting)
+        // ...
         const {
-            doctor_name,
-            doctor_phone_number,
-            locality,
-            duration_of_meeting,
-            queries_by_the_doctor,
-            comments_by_ndm,
-            chances_of_getting_leads,
-            timestamp_of_the_meeting, // e.g., "31/10/2025 14:30:00"
+            doctor_name, doctor_phone_number, locality, duration_of_meeting,
+            queries_by_the_doctor, comments_by_ndm, chances_of_getting_leads,
+            timestamp_of_the_meeting,
         } = req.body;
 
-        // 3. Use logged-in user's name
         const ndm_name = loggedInUser.first_name;
-
-        if (!ndm_name || !doctor_phone_number) {
-            throw new apiError(400, "ndm name and doctor phone number are compulsory");
-        }
-
+        if (!ndm_name || !doctor_phone_number) throw new apiError(400, "NDM name and doctor phone are compulsory");
+        
         const timestamp = processTimeStamp(timestamp_of_the_meeting);
         const phone = process_phone_no(doctor_phone_number);
+        if (!phone || !timestamp) throw new apiError(400, "Invalid phone or timestamp");
 
-        if (!phone || !timestamp) {
-            throw new apiError(400, "Invalid phone or timestamp");
-        }
-
-        // 4. Run your existing logic from createDoctorByName
         const { firstName, lastName } = processDoctorName(doctor_name);
-        const dr_name = firstName + " " + lastName;
-        const fullName = dr_name.trim();
-
+        const fullName = `${firstName} ${lastName}`.trim();
         const locationJson = JSON.stringify({ locality: locality });
 
-        const existingDoctor = await pool.query(
-            "SELECT id, onboarding_date, last_meeting, assigned_agent_id_offline FROM doctors WHERE phone = $1",
-            [phone]
-        );
-        
+        const existingDoctor = await pool.query("SELECT id, onboarding_date, last_meeting, assigned_agent_id_offline FROM doctors WHERE phone = $1", [phone]);
         let NDM = loggedInUser.id; 
 
         if (existingDoctor?.rows?.length > 0) {
@@ -208,7 +190,6 @@ export default class doctorController {
             if (new Date(doc.last_meeting) > new Date(timestamp)) {
                 NDM = doc.assigned_agent_id_offline;
             }
-
             await pool.query(
                 `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, updated_at = $5, assigned_agent_id_offline = $6 WHERE phone = $4`,
                 [ newOnboarding, newLastMeeting, locationJson, phone, timestamp, NDM ]
@@ -221,45 +202,49 @@ export default class doctorController {
         }
 
         const doctor = await pool.query("SELECT id FROM doctors WHERE phone = $1", [phone]);
-        
-        // --- (Bug fix from previous step) ---
         if (doctor.rows.length === 0) {
             throw new apiError(500, "Error creating doctor.");
         }
         
-        // INSERT NEW MEETING RECORD
         const meeting = await pool.query(
             "INSERT INTO doctor_meetings (doctor_id,agent_id,meeting_type,duration,location,meeting_notes,gps_verified,meeting_summary,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,agent_id,doctor_id",
             [
                 doctor.rows[0].id, NDM, "physical", duration_of_meeting,
-                locationJson, queries_by_the_doctor, false, // GPS not verified from web
+                locationJson, queries_by_the_doctor, false,
                 chances_of_getting_leads, timestamp, timestamp
             ]
         );
+        // ...
+        // ... (End of DB logic)
+        
 
         // --- 5. RESPOND TO CLIENT (FAST) ---
         res.status(201).json(new apiResponse(201, { ...meeting.rows[0], doctor_name: fullName }, "Doctor and meeting successfully created"));
 
-        // --- 6. ADD JOB TO QUEUE (INSTEAD OF CALLING API) ---
-        const [date_of_meeting, time_of_meeting] = timestamp_of_the_meeting.split(' ');
-        const sheetRow = [
-            ndm_name, doctor_name, doctor_phone_number, locality,
-            null, // facilities
-            null, // opd_count
-            duration_of_meeting,
-            null, // numPatientsDuringMeeting
-            queries_by_the_doctor,
-            null, // rating
-            comments_by_ndm,
-            chances_of_getting_leads,
-            null, // clinic_image_link
-            null, // selfie_image_link
-            null, // gps_location
-            date_of_meeting,
-            time_of_meeting,
-            timestamp_of_the_meeting
-        ];
-        addToSheetQueue("DOCTOR_MEETING", sheetRow);
+        // --- 6. RUN BACKGROUND TASKS SAFELY ---
+        const runBackgroundTasks = async () => {
+            try {
+                // --- Task A: Add to Google Sheet Queue ---
+                const [date_of_meeting, time_of_meeting] = timestamp_of_the_meeting.split(' ');
+                const sheetRow = [
+                    ndm_name, doctor_name, doctor_phone_number, locality,
+                    null, null, duration_of_meeting, null, queries_by_the_doctor,
+                    null, comments_by_ndm, chances_of_getting_leads, null, null, null,
+                    date_of_meeting, time_of_meeting, timestamp_of_the_meeting
+                ];
+                await addToSheetQueue("DOCTOR_MEETING", sheetRow);
+
+                // (No notifications for this one yet, but you could add them here)
+
+            } catch (backgroundError) {
+                console.error("--- BACKGROUND TASK FAILED (Doctor Meeting) ---");
+                console.error(backgroundError.message);
+                console.error("--- This did not stop the user's request. ---");
+            }
+        };
+        
+        // Call the function to run in the background.
+        runBackgroundTasks();
     });
 
     // --- THIS IS YOUR ORIGINAL FUNCTION (UNCHANGED) ---
