@@ -1,9 +1,9 @@
 import axios from 'axios';
 import { pool } from '../DB/db.js';
 import { URLSearchParams } from 'url';
-// We do not need the 'qrcode' library
 
 // --- 1. Reusable UltraMsg Function (Unchanged) ---
+// ... (keep sendUltraMsg function as is)
 const sendUltraMsg = async (to, body) => {
     const url = `https://api.ultramsg.com/${process.env.ULTRAMSG_INSTANCE}/messages/chat`;
     const params = new URLSearchParams();
@@ -22,6 +22,7 @@ const sendUltraMsg = async (to, body) => {
 };
 
 // --- 2. Reusable AiSensy Function (Unchanged) ---
+// ... (keep sendAiSensy function as is)
 const sendAiSensy = async (to, name, mediaUrl) => {
     const url = 'https://backend.aisensy.com/campaign/t1/api/v2';
     const payload = {
@@ -46,55 +47,89 @@ const sendAiSensy = async (to, name, mediaUrl) => {
     }
 };
 
-// --- 3. QR Code Generator (CORRECTED to match your Apps Script) ---
+
 const fetchQrCodeUrl = async (patientData) => {
-    // These URLs are copied directly from your Apps Script
     const baseUrl = "https://medpho-public.s3.amazonaws.com/patientinformation/patient-information.html?";
     const qrCodeUrlAPI = "https://backend.medpho.com/v1/qrCode/generateQRCode?url=";
 
-    // We build the URL with the same parameters as your script
     const patientParams = new URLSearchParams({
-        name: patientData.patient_name,
+        name: patientData.name || "N/A",
         age: patientData.age || "N/A",
         gender: patientData.gender || "N/A",
-        credits: patientData.credits || "0", // Apps Script defaults to "0"
-        phoneNumber: patientData.patient_phone,
-        uniqueCode: patientData.booking_reference, // This is the new Unique ID
-        timeStamp: new Date().toISOString() // Live timestamp
+        credits: patientData.credits || "0",
+        phoneNumber: patientData.phoneNumber || "",
+        uniqueCode: patientData.uniqueCode || "",
+        timeStamp: patientData.timestamp || new Date().toISOString()
     });
 
     const patientUrl = baseUrl + patientParams.toString();
-
-    // Build the final API call URL
     const finalApiUrl = qrCodeUrlAPI + encodeURIComponent(patientUrl);
 
+    // --- NEW LOGGING ---
+    console.log("-------------------------------------------------");
+    console.log("Attempting to generate QR Code...");
+    console.log("Patient URL (unencoded):", patientUrl);
+    console.log("Final API URL (encoded):", finalApiUrl);
+    // --- END NEW LOGGING ---
+
     try {
-        // Fetch the QR code URL from your internal API
         const response = await axios.get(finalApiUrl);
-        // Parse the response to get the location, just like your script
         const qrCodeImageUrl = response.data.location;
         
         if (!qrCodeImageUrl) {
+            console.error("QR Code API Error: Response received, but 'location' field was missing.");
+            console.error("Full Response Data:", response.data);
             throw new Error("QR code API response did not contain a 'location' field.");
         }
         
+        console.log("QR Code Test: Success! Received URL:", qrCodeImageUrl);
+        console.log("-------------------------------------------------");
         return qrCodeImageUrl;
 
     } catch (err) {
-        console.error("Failed to generate QR code from Medpho API:", err.message);
+        // --- NEW DETAILED ERROR LOGGING ---
+        console.error("--- QR Code Test: FAILED ---");
+        console.error("Failed to generate QR code from Medpho API.");
+
+        if (axios.isAxiosError(err)) {
+            console.error("Axios Error:", err.message);
+            if (err.response) {
+                // The request was made and the server responded with a status code
+                console.error("Status Code:", err.response.status);
+                console.error("Response Data:", err.response.data);
+            } else if (err.request) {
+                // The request was made but no response was received
+                console.error("No response received. Is the domain backend.medpho.com reachable?");
+            }
+        } else {
+            // Something else happened (like the 'location' field missing)
+            console.error("Non-Axios Error:", err.message);
+        }
+        console.log("-------------------------------------------------");
+        // --- END NEW LOGGING ---
+        
         return null; // Return null if it fails
     }
 };
 
-// --- 4. The Main Notification Service (Updated to 'await' the new function) ---
+
 export const sendOpdNotifications = async (patientData) => {
     console.log(`Sending notifications for booking: ${patientData.booking_reference}`);
     
     const notificationPromises = [];
 
     // --- Notification 1: Patient (AiSensy) ---
-    // This now correctly calls your internal QR code API
-    const qrCodeUrl = await fetchQrCodeUrl(patientData);
+    const qrPatientData = {
+        name: patientData.patient_name,
+        age: patientData.age || "N/A",
+        gender: patientData.gender || "N/A",
+        credits: patientData.credits || "0", 
+        phoneNumber: patientData.patient_phone,
+        uniqueCode: patientData.booking_reference, 
+        timestamp: new Date().toISOString()
+    };
+    
+    const qrCodeUrl = await fetchQrCodeUrl(qrPatientData);
     
     if (qrCodeUrl) {
         notificationPromises.push(
@@ -175,6 +210,7 @@ export const sendOpdNotifications = async (patientData) => {
 };
 
 // --- (Helper function is unchanged) ---
+// ... (keep getHospitalGroupId function as is)
 const getHospitalGroupId = async (hospitalName) => {
     try {
         const result = await pool.query(
