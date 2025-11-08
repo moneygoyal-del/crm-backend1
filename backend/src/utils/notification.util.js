@@ -1,9 +1,9 @@
 import axios from 'axios';
 import { pool } from '../DB/db.js';
 import { URLSearchParams } from 'url';
+import https from 'https';
 
-// --- 1. Reusable UltraMsg Function (Unchanged) ---
-// ... (keep sendUltraMsg function as is)
+
 const sendUltraMsg = async (to, body) => {
     const url = `https://api.ultramsg.com/${process.env.ULTRAMSG_INSTANCE}/messages/chat`;
     const params = new URLSearchParams();
@@ -21,8 +21,7 @@ const sendUltraMsg = async (to, body) => {
     }
 };
 
-// --- 2. Reusable AiSensy Function (Unchanged) ---
-// ... (keep sendAiSensy function as is)
+
 const sendAiSensy = async (to, name, mediaUrl) => {
     const url = 'https://backend.aisensy.com/campaign/t1/api/v2';
     const payload = {
@@ -65,16 +64,20 @@ const fetchQrCodeUrl = async (patientData) => {
     const patientUrl = baseUrl + patientParams.toString();
     const finalApiUrl = qrCodeUrlAPI + encodeURIComponent(patientUrl);
 
-    // --- NEW LOGGING ---
-    console.log("-------------------------------------------------");
-    console.log("Attempting to generate QR Code...");
-    console.log("Patient URL (unencoded):", patientUrl);
-    console.log("Final API URL (encoded):", finalApiUrl);
+    // // --- NEW LOGGING ---
+    // console.log("-------------------------------------------------");
+    // console.log("Attempting to generate QR Code...");
+    // console.log("Patient URL (unencoded):", patientUrl);
+    // console.log("Final API URL (encoded):", finalApiUrl);
     // --- END NEW LOGGING ---
 
+    const httpsAgent = new https.Agent({ family: 4 });
+
     try {
-        const response = await axios.get(finalApiUrl);
-        const qrCodeImageUrl = response.data.location;
+        const response = await axios.get(finalApiUrl, { httpsAgent: httpsAgent });
+        // console.log(response)
+    const qrCodeImageUrl = response.data.location;
+
         
         if (!qrCodeImageUrl) {
             console.error("QR Code API Error: Response received, but 'location' field was missing.");
@@ -209,8 +212,7 @@ export const sendOpdNotifications = async (patientData) => {
     console.log(`All notifications for ${patientData.booking_reference} have been processed.`);
 };
 
-// --- (Helper function is unchanged) ---
-// ... (keep getHospitalGroupId function as is)
+
 const getHospitalGroupId = async (hospitalName) => {
     try {
         const result = await pool.query(
