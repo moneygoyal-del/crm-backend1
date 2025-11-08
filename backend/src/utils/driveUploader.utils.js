@@ -10,10 +10,9 @@ export async function uploadAndGetLink(imagePath,mimeType='image/jpeg') {
     });
     const drive = google.drive({ version: 'v3', auth });
 
-    const PARENT = "0AK0SoUiSRlY4Uk9PVA";
     const fileMetadata = {
         name: 'backend-image.txt',
-        parents: [PARENT]
+        parents: [process.env.PARENT]
     };
     const media = {
         mimeType: mimeType,
