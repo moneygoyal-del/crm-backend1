@@ -40,6 +40,8 @@ CREATE TABLE opd_bookings (
     appointment_time TIME ,
     booking_status VARCHAR(30) DEFAULT 'confirmed', -- 'confirmed', 'rescheduled', 'cancelled', 'completed', 'no_show'
     current_disposition VARCHAR(50), -- 'opd_booked', 'pre_consultation', 'consultation_done', 'treatment_planned', 'procedure_scheduled', 'recovery', 'completed'
+    aadhar_card_url TEXT,
+    pmjay_card_url TEXT,
     assigned_care_coordinator_id UUID REFERENCES users(id),
     estimated_case_value DECIMAL(10,2),
     actual_case_value DECIMAL(10,2),
