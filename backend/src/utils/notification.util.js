@@ -235,6 +235,7 @@ const getHospitalGroupId = async (hospitalName) => {
 export const sendDoctorMeetingNotification = async (doctorName, ndManagerName, doctorPhoneNumber) => {
  
     const url = 'https://backend.aisensy.com/campaign/t1/api/v2';
+    // console.log(doctorName,ndManagerName,doctorPhoneNumber)
 
   
     const payload = {
@@ -247,11 +248,15 @@ export const sendDoctorMeetingNotification = async (doctorName, ndManagerName, d
             ndManagerName
         ],
 
-        "source": "new-landing-page form",
-        "media": {},
-        "buttons": [],
-        "carouselCards": [],
-        "location": {}
+       "source": "new-landing-page form",
+  "media": {},
+  "buttons": [],
+  "carouselCards": [],
+  "location": {},
+  "attributes": {},
+  "paramsFallbackValue": {
+    "FirstName": "user"
+  }
 
     };
 
