@@ -4,9 +4,11 @@ import asyncHandler from "../utils/asynchandler.utils.js";
 import { process_phone_no, processTimeStamp, processString, convertDurationToMinutes, parseCallLogTimestamp} from "../helper/preprocess_data.helper.js";
 import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
-import fs from "fs";
+import fs from "fs/promises";
 import { processDoctorName } from "../helper/process_doctor_name.helper.js";
 import { addToSheetQueue } from "../utils/sheetQueue.util.js"; // <-- USE THE QUEUE
+import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
+import { sendDoctorMeetingNotification } from "../utils/notification.util.js";
 
 export default class doctorController {
     // --- THIS IS YOUR ORIGINAL FUNCTION (UNCHANGED) ---
@@ -161,25 +163,49 @@ export default class doctorController {
             throw new apiError(401, "User not authenticated or name is missing");
         }
         
-        // ... (all validation, DB inserts, and updates for doctor/meeting)
-        // ...
+        // 2. Destructure ALL fields from the new form
         const {
             doctor_name, doctor_phone_number, locality, duration_of_meeting,
             queries_by_the_doctor, comments_by_ndm, chances_of_getting_leads,
-            timestamp_of_the_meeting,
+            timestamp_of_the_meeting, // This is the "dd/mm/yyyy HH:MM:SS" string
+            
+            // --- NEW FIELDS ---
+            clinic_image_link,
+            selfie_image_link,
+            gps_location_of_the_clinic,
+            latitude,
+            longitude,
+            facilities, // This will be a comma-separated string from the GAS form
+            opd_count,
+            numPatientsDuringMeeting,
+            rating
+            // --- END NEW FIELDS ---
         } = req.body;
 
         const ndm_name = loggedInUser.first_name;
         if (!ndm_name || !doctor_phone_number) throw new apiError(400, "NDM name and doctor phone are compulsory");
         
-        const timestamp = processTimeStamp(timestamp_of_the_meeting);
+        // 3. Process data
+        const timestamp = processTimeStamp(timestamp_of_the_meeting); // Converts "dd/mm/yyyy..." to ISO
         const phone = process_phone_no(doctor_phone_number);
-        if (!phone || !timestamp) throw new apiError(400, "Invalid phone or timestamp");
+        if (!phone || !timestamp) throw new apiError(400, "Invalid phone or timestamp format");
 
         const { firstName, lastName } = processDoctorName(doctor_name);
         const fullName = `${firstName} ${lastName}`.trim();
-        const locationJson = JSON.stringify({ locality: locality });
 
+        // 4. Update Location and Photos JSON
+        const locationJson = JSON.stringify({
+            locality: locality,
+            latitude: latitude,
+            longitude: longitude
+        });
+        
+        const photosJSON = JSON.stringify({
+            clinicImage: clinic_image_link,
+            selfieImage: selfie_image_link
+        });
+
+        // ... (keep existing doctor lookup/update/insert logic as-is) ...
         const existingDoctor = await pool.query("SELECT id, onboarding_date, last_meeting, assigned_agent_id_offline FROM doctors WHERE phone = $1", [phone]);
         let NDM = loggedInUser.id; 
 
@@ -191,13 +217,21 @@ export default class doctorController {
                 NDM = doc.assigned_agent_id_offline;
             }
             await pool.query(
-                `UPDATE doctors SET onboarding_date = $1, last_meeting = $2, location = $3, updated_at = $5, assigned_agent_id_offline = $6 WHERE phone = $4`,
-                [ newOnboarding, newLastMeeting, locationJson, phone, timestamp, NDM ]
+                // --- UPDATE Query: Add location and gps_location_link ---
+                `UPDATE doctors SET 
+                    onboarding_date = $1, last_meeting = $2, location = $3, 
+                    updated_at = $5, assigned_agent_id_offline = $6, gps_location_link = $7 
+                 WHERE phone = $4`,
+                [ newOnboarding, newLastMeeting, locationJson, phone, timestamp, NDM, gps_location_of_the_clinic ]
             );
         } else {
             await pool.query(
-                `INSERT INTO doctors (first_name, phone, location, onboarding_date, last_meeting, assigned_agent_id_offline) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [ fullName, phone, locationJson, timestamp, timestamp, NDM ]
+                // --- INSERT Query: Add location and gps_location_link ---
+                `INSERT INTO doctors (
+                    first_name, phone, location, onboarding_date, 
+                    last_meeting, assigned_agent_id_offline, gps_location_link
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [ fullName, phone, locationJson, timestamp, timestamp, NDM, gps_location_of_the_clinic ]
             );
         }
 
@@ -206,35 +240,66 @@ export default class doctorController {
             throw new apiError(500, "Error creating doctor.");
         }
         
+        // 5. Insert the new, detailed meeting record
         const meeting = await pool.query(
-            "INSERT INTO doctor_meetings (doctor_id,agent_id,meeting_type,duration,location,meeting_notes,gps_verified,meeting_summary,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,agent_id,doctor_id",
+            `INSERT INTO doctor_meetings (
+                doctor_id, agent_id, meeting_type, duration, location, 
+                meeting_notes, gps_verified, meeting_summary, created_at, updated_at,
+                photos, gps_location_link 
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+            RETURNING id, agent_id, doctor_id`,
             [
                 doctor.rows[0].id, NDM, "physical", duration_of_meeting,
-                locationJson, queries_by_the_doctor, false,
-                chances_of_getting_leads, timestamp, timestamp
+                locationJson, 
+                `Queries: ${queries_by_the_doctor} \n\nComments: ${comments_by_ndm}`, // Combine notes
+                true, // GPS is verified from the form
+                chances_of_getting_leads, 
+                timestamp, timestamp,
+                photosJSON, // Add photos
+                gps_location_of_the_clinic // Add GPS link
             ]
         );
-        // ...
-        // ... (End of DB logic)
         
-
-        // --- 5. RESPOND TO CLIENT (FAST) ---
+        // ... (End of DB logic) ...
+        
+        // --- 6. RESPOND TO CLIENT (FAST) ---
         res.status(201).json(new apiResponse(201, { ...meeting.rows[0], doctor_name: fullName }, "Doctor and meeting successfully created"));
 
-        // --- 6. RUN BACKGROUND TASKS SAFELY ---
+        // --- 7. RUN BACKGROUND TASKS SAFELY ---
         const runBackgroundTasks = async () => {
             try {
-                // --- Task A: Add to Google Sheet Queue ---
+                // --- Task A: Add to Google Sheet Queue (with all new fields) ---
                 const [date_of_meeting, time_of_meeting] = timestamp_of_the_meeting.split(' ');
+                
+                // This array MUST match the column order in your Google Sheet "Responses"
                 const sheetRow = [
-                    ndm_name, doctor_name, doctor_phone_number, locality,
-                    null, null, duration_of_meeting, null, queries_by_the_doctor,
-                    null, comments_by_ndm, chances_of_getting_leads, null, null, null,
-                    date_of_meeting, time_of_meeting, timestamp_of_the_meeting
+                    ndm_name,                     // formData.nd_manager
+                    doctor_name,                  // formData.doctor
+                    doctor_phone_number,          // formData.doctor_phone
+                    locality,                     // formData.clinicLocality
+                    facilities,                   // formData.facilities
+                    opd_count,                    // formData.opd_count
+                    duration_of_meeting,          // formData.durationMeeting
+                    numPatientsDuringMeeting,     // formData.numPatientsDuringMeeting
+                    queries_by_the_doctor,        // formData.doctorQueries
+                    rating,                       // formData.rating
+                    comments_by_ndm,              // formData.comments
+                    chances_of_getting_leads,     // formData.leadChances
+                    clinic_image_link,            // clinicPhotoUrl
+                    selfie_image_link,            // selfieUrl
+                    gps_location_of_the_clinic,   // 'http://googleusercontent.com/maps...'
+                    date_of_meeting,              // formattedDate
+                    time_of_meeting,              // formattedTime
+                    timestamp                     // now (as ISO string)
                 ];
                 await addToSheetQueue("DOCTOR_MEETING", sheetRow);
 
-                // (No notifications for this one yet, but you could add them here)
+                // --- Task B: Send WhatsApp Notification ---
+                await sendDoctorMeetingNotification(
+                    doctor_name,
+                    ndm_name,
+                    doctor_phone_number
+                );
 
             } catch (backgroundError) {
                 console.error("--- BACKGROUND TASK FAILED (Doctor Meeting) ---");
@@ -243,7 +308,6 @@ export default class doctorController {
             }
         };
         
-        // Call the function to run in the background.
         runBackgroundTasks();
     });
 
@@ -914,6 +978,35 @@ export default class doctorController {
             failed_count: failedRows.length,
             failures: failedRows
         }, "Call Logs batch processing complete."));
+    });
+
+    uploadMeetingPhoto = asyncHandler(async (req, res) => {
+        const file = req.file;
+        if (!file) {
+            throw new apiError(400, "No file uploaded.");
+        }
+
+        try {
+            // 1. Upload the file from its temporary path to Google Drive
+            const links = await uploadAndGetLink(file.path, file.mimetype);
+            
+            // 2. Delete the temporary file from the server
+            await fs.unlink(file.path);
+
+            // 3. Return the Google Drive link to the frontend
+            res.status(200).json(new apiResponse(
+                200, 
+                { url: links.directLink }, // Send the direct download link
+                "Document uploaded successfully"
+            ));
+
+        } catch (uploadError) {
+            // If upload fails, still try to delete the temp file
+            try { await fs.unlink(file.path); } catch (e) { /* ignore */ }
+            
+            console.error("Google Drive Upload Error:", uploadError);
+            throw new apiError(500, "Failed to upload file to Google Drive.", [], uploadError.stack);
+        }
     });
 
 }
