@@ -4,6 +4,12 @@ import { createReadStream } from 'fs';
 
 export async function uploadAndGetLink(imagePath,mimeType='image/jpeg') {
 
+    if (process.env.PARENT) {
+        console.log("PARENT FOLDER ID BEING USED:", process.env.PARENT);
+    } else {
+        console.log("PARENT FOLDER ID not set - file will be uploaded to Drive root");
+    }
+
     const auth = new google.auth.GoogleAuth({
         keyFile: 'drive.json',
         scopes: ['https://www.googleapis.com/auth/drive'],
@@ -12,8 +18,12 @@ export async function uploadAndGetLink(imagePath,mimeType='image/jpeg') {
 
     const fileMetadata = {
         name: 'backend-image.txt',
-        parents: [process.env.PARENT]
     };
+    
+    // Only include parents if PARENT folder ID is defined
+    if (process.env.PARENT) {
+        fileMetadata.parents = [process.env.PARENT];
+    }
     const media = {
         mimeType: mimeType,
         body: createReadStream(imagePath),

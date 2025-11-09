@@ -29,4 +29,10 @@ router.route("/createBatchCallLogs").post(upload.single('calllogs'), DoctorContr
 
 router.route("/create-web").post(verifyJWT, DoctorController.createMeetingFromWeb);
 
+router.route("/upload-meeting-photo").post(
+    verifyJWT,
+    upload.single('document'), // 'document' is the form field name
+    DoctorController.uploadMeetingPhoto
+);
+
 export default router;

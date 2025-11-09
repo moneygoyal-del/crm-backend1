@@ -14,21 +14,21 @@ const getCurrentTime = () =>
 export default function BookOpdPage() {
   const navigate = useNavigate();
 
-  // --- 1. NEW STATE for the dropdown lists ---
+  // --- 1. State for dropdown lists ---
   const [cities, setCities] = useState<string[]>([]);
   const [hospitals, setHospitals] = useState<string[]>([]);
   const [isHospitalLoading, setIsHospitalLoading] = useState(false);
-  // --- END NEW STATE ---
 
+  // --- 2. State for the form data ---
   const [formData, setFormData] = useState({
     booking_reference: generateLeadId(),
     patient_name: "",
     patient_phone: "",
     referee_name: "",
     refree_phone_no: "",
-    hospital_name: "", // This will now be a select
+    hospital_name: "",
     medical_condition: "",
-    city: "", // This will now be a select
+    city: "",
     age: "",
     gender: "",
     panel: "",
@@ -37,11 +37,20 @@ export default function BookOpdPage() {
     current_disposition: "opd_booked",
   });
 
+  // --- 3. State for UI and errors ---
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // --- 4. State for file uploads ---
+  const [aadharUrl, setAadharUrl] = useState<string | null>(null);
+  const [pmjayUrl, setPmjayUrl] = useState<string | null>(null);
+  const [isUploadingAadhar, setIsUploadingAadhar] = useState(false);
+  const [isUploadingPmjay, setIsUploadingPmjay] = useState(false);
+
   const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
+  // --- 5. Memos and Effects for date/time logic ---
   const minTime = useMemo(() => {
     const today = getTodayDate();
     return formData.appointment_date === today ? getCurrentTime() : "00:00";
@@ -56,7 +65,7 @@ export default function BookOpdPage() {
     }
   }, [formData.appointment_date, formData.appointment_time]);
 
-  // --- 2. NEW useEffect to fetch all cities ONCE on page load ---
+  // --- 6. Effects for fetching cities and hospitals ---
   useEffect(() => {
     const fetchCities = async () => {
       try {
@@ -67,19 +76,16 @@ export default function BookOpdPage() {
       }
     };
     fetchCities();
-  }, []); // Empty array means run only once
+  }, []);
 
-  // --- 3. NEW useEffect to fetch hospitals WHEN city changes ---
   useEffect(() => {
-    // Clear hospital list if no city is selected
     if (!formData.city) {
       setHospitals([]);
       return;
     }
-
     const fetchHospitals = async () => {
       setIsHospitalLoading(true);
-      setHospitals([]); // Clear old hospital list
+      setHospitals([]);
       try {
         const res = await api.get(`/hospitals/by-city/${formData.city}`);
         setHospitals(res.data.data || []);
@@ -89,37 +95,78 @@ export default function BookOpdPage() {
       setIsHospitalLoading(false);
     };
     fetchHospitals();
-  }, [formData.city]); // This hook runs every time formData.city changes
+  }, [formData.city]);
 
-  // --- 4. UPDATE handleChange to reset hospital when city changes ---
+  // --- 7. Form field change handler ---
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
-
     setFormData((prev) => {
-      // Start with the new state
-      const newState = {
-        ...prev,
-        [name]: value,
-      };
-
-      // If the user changed the city, THEN reset the hospital
+      const newState = { ...prev, [name]: value };
       if (name === "city") {
         newState.hospital_name = "";
       }
-
       return newState;
     });
   };
 
+  // --- 8. File upload handler ---
+  const handleFileUpload = async (
+    file: File,
+    docType: 'aadhar' | 'pmjay'
+  ) => {
+    if (!file) return;
+
+    if (docType === 'aadhar') setIsUploadingAadhar(true);
+    if (docType === 'pmjay') setIsUploadingPmjay(true);
+    setError('');
+
+    const fileFormData = new FormData();
+    fileFormData.append('document', file);
+
+    try {
+      const res = await api.post('/patientLeads/upload-document', fileFormData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const driveUrl = res.data.data.url;
+      if (docType === 'aadhar') setAadharUrl(driveUrl);
+      if (docType === 'pmjay') setPmjayUrl(driveUrl);
+
+    } catch (err) {
+      console.error("File upload failed:", err);
+      setError(`Failed to upload ${docType} image. Please try again.`);
+    } finally {
+      if (docType === 'aadhar') setIsUploadingAadhar(false);
+      if (docType === 'pmjay') setIsUploadingPmjay(false);
+    }
+  };
+
+  // --- 9. NEW: File remove handler ---
+  const handleFileRemove = (docType: 'aadhar' | 'pmjay') => {
+    if (docType === 'aadhar') {
+      setAadharUrl(null);
+      const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
+      if (aadharInput) aadharInput.value = "";
+    }
+    if (docType === 'pmjay') {
+      setPmjayUrl(null);
+      const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
+      if (pmjayInput) pmjayInput.value = "";
+    }
+  };
+  // --- END NEW FUNCTION ---
+
+  // --- 10. Form submit handler (UPDATED) ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccess("");
     setLoading(true);
 
-    // Added city to validation
     if (
       !formData.patient_name ||
       !formData.patient_phone ||
@@ -135,7 +182,12 @@ export default function BookOpdPage() {
       return;
     }
 
-    const payload = { ...formData, age: formData.age || "N/A" };
+    const payload = {
+      ...formData,
+      age: formData.age || "N/A",
+      aadhar_card_url: aadharUrl,
+      pmjay_card_url: pmjayUrl,
+    };
 
     try {
       const res = await api.post("/patientLeads/create-web", payload);
@@ -153,7 +205,7 @@ export default function BookOpdPage() {
         refree_phone_no: "",
         hospital_name: "",
         medical_condition: "",
-        city: "", // Reset city
+        city: "",
         age: "",
         gender: "",
         panel: "",
@@ -161,11 +213,15 @@ export default function BookOpdPage() {
         appointment_time: getCurrentTime(),
         current_disposition: "opd_booked",
       });
-      setHospitals([]); // Clear hospital list
+      setHospitals([]);
+      
+      setAadharUrl(null);
+      setPmjayUrl(null);
+      (document.getElementById('aadhar-upload') as HTMLInputElement).value = "";
+      (document.getElementById('pmjay-upload') as HTMLInputElement).value = "";
+      
     } catch (err: unknown) {
-      // Use 'unknown' type
       if (axios.isAxiosError(err)) {
-        // Check if it's an Axios error
         if (err.response?.data?.message?.includes("duplicate key")) {
           setError(
             "A booking with this ID already exists. Please submit again."
@@ -185,6 +241,7 @@ export default function BookOpdPage() {
     }
   };
 
+  // --- 11. JSX (UPDATED) ---
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       {/* Header */}
@@ -281,7 +338,6 @@ export default function BookOpdPage() {
                 </div>
               </div>
             )}
-
             {success && (
               <div className="mb-6 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">
                 <div className="flex items-center">
@@ -385,6 +441,83 @@ export default function BookOpdPage() {
                     <option value="other">Other</option>
                   </select>
                 </div>
+
+                {/* --- UPDATED FILE INPUTS --- */}
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Aadhar Card Photo
+                  </label>
+                  
+                  {/* Show input if NOT uploaded and NOT uploading */}
+                  {!aadharUrl && !isUploadingAadhar && (
+                    <input
+                      id="aadhar-upload"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'aadhar')}
+                      disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                      className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50"
+                    />
+                  )}
+                  
+                  {/* Show loading text */}
+                  {isUploadingAadhar && <p className="text-xs text-yellow-400 mt-1">Uploading...</p>}
+                  
+                  {/* Show success + remove button */}
+                  {aadharUrl && !isUploadingAadhar && (
+                    <div className="flex items-center justify-between p-2 bg-gray-700 rounded-lg">
+                      <p className="text-sm text-green-400">Aadhar Uploaded ✓</p>
+                      <button
+                        type="button"
+                        onClick={() => handleFileRemove('aadhar')}
+                        disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                        className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    PMJAY Card Photo
+                  </label>
+                  
+                  {/* Show input if NOT uploaded and NOT uploading */}
+                  {!pmjayUrl && !isUploadingPmjay && (
+                    <input
+                      id="pmjay-upload"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'pmjay')}
+                      disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                      className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50"
+                    />
+                  )}
+                  
+                  {/* Show loading text */}
+                  {isUploadingPmjay && <p className="text-xs text-yellow-400 mt-1">Uploading...</p>}
+                  
+                  {/* Show success + remove button */}
+                  {pmjayUrl && !isUploadingPmjay && (
+                    <div className="flex items-center justify-between p-2 bg-gray-700 rounded-lg">
+                      <p className="text-sm text-green-400">PMJAY Uploaded ✓</p>
+                      <button
+                        type="button"
+                        onClick={() => handleFileRemove('pmjay')}
+                        disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                        className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {/* --- END UPDATED FILE INPUTS --- */}
+
               </div>
             </div>
 
@@ -408,7 +541,6 @@ export default function BookOpdPage() {
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* --- CITY DROPDOWN (MOVED HERE) --- */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     City <span className="text-red-400">*</span>
@@ -429,7 +561,6 @@ export default function BookOpdPage() {
                   </select>
                 </div>
 
-                {/* --- HOSPITAL DROPDOWN (MOVED HERE) --- */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Hospital Name <span className="text-red-400">*</span>
@@ -439,7 +570,7 @@ export default function BookOpdPage() {
                     value={formData.hospital_name}
                     onChange={handleChange}
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                    disabled={!formData.city || isHospitalLoading} // Disable if no city or loading
+                    disabled={!formData.city || isHospitalLoading}
                     required
                   >
                     <option value="">
@@ -457,7 +588,6 @@ export default function BookOpdPage() {
                   </select>
                 </div>
 
-                {/* (Referee fields) */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Referee Name
@@ -488,7 +618,6 @@ export default function BookOpdPage() {
                   />
                 </div>
 
-                {/* (Medical Condition and Panel) */}
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Medical Condition <span className="text-red-400">*</span>
@@ -577,7 +706,7 @@ export default function BookOpdPage() {
             <div className="pt-6">
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || isUploadingAadhar || isUploadingPmjay}
                 className="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               >
                 {loading ? (

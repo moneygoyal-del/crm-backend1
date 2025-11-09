@@ -230,3 +230,30 @@ const getHospitalGroupId = async (hospitalName) => {
         return null;
     }
 };
+
+
+export const sendDoctorMeetingNotification = async (doctorName, ndManagerName, doctorPhoneNumber) => {
+    // This function mimics your Google Apps Script logic
+    const url = 'https://backend.aisensy.com/campaign/t1/api/v2';
+
+    const payload = {
+        "apiKey": process.env.AISENSY_API_KEY, // Make sure this is in your .env
+        "campaignName": "Doctor_Meeting_TypoCorrected",
+        "destination": `91${doctorPhoneNumber}`, // The doctor's phone number
+        "userName": "Medpho 2842",
+        "templateParams": [
+            doctorName,
+            ndManagerName
+        ]
+    };
+
+    try {
+        await axios.post(url, payload, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+        console.log(`AiSensy Doctor Meeting message sent to: ${doctorPhoneNumber}`);
+    } catch (error) {
+        console.error(`Failed to send AiSensy to ${doctorPhoneNumber}:`, error.response?.data || error.message);
+    }
+
+};
