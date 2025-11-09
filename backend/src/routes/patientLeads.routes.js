@@ -15,4 +15,10 @@ router.route("/update").put(PatientLeadController.updatePatientLead);
 
 router.route("/create-web").post(verifyJWT, PatientLeadController.createOpdBookingFromWeb);
 
+router.route("/upload-document").post(
+    verifyJWT,
+    upload.single('document'), // 'document' is the name of the form field
+    PatientLeadController.uploadOpdDocument
+);
+
 export default router;

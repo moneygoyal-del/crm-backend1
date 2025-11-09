@@ -3,10 +3,11 @@ import asyncHandler from "../utils/asynchandler.utils.js";
 import { process_phone_no, parseTimestamp, processString, processTimeStamp } from "../helper/preprocess_data.helper.js";
 import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
-import fs from "fs";
 import apiError from "../utils/apiError.utils.js";
 import { addToSheetQueue } from "../utils/sheetQueue.util.js"; 
 import { sendOpdNotifications } from "../utils/notification.util.js";
+import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
+import fs from "fs/promises"; 
 
 export default class patientLeadController {
 
@@ -94,7 +95,7 @@ export default class patientLeadController {
             hospital_name, refree_phone_no, referee_name, patient_name, patient_phone,
             city, age: _age, gender, medical_condition, panel,
             booking_reference, appointment_date, appointment_time,
-            current_disposition
+            current_disposition,aadhar_card_url, pmjay_card_url
         } = req.body;
 
         // --- Data Processing and Validation ---
@@ -134,15 +135,15 @@ export default class patientLeadController {
             `INSERT INTO opd_bookings (
                 booking_reference, patient_name, patient_phone, age, gender, 
                 medical_condition, hospital_name, appointment_date, appointment_time, 
-                current_disposition, created_by_agent_id, last_interaction_date, 
+                current_disposition,aadhar_card_url, pmjay_card_url, created_by_agent_id, last_interaction_date, 
                 source, referee_id, created_at, updated_at, payment_mode
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) 
             RETURNING id, booking_reference, patient_name`,
             [
                 booking_reference, patient_name, patient_phone_processed, age, gender,
                 medical_condition, hospital_name, appointment_date, appointment_time,
-                current_disposition, created_by_agent_id, last_interaction_date,
+                current_disposition,aadhar_card_url, pmjay_card_url, created_by_agent_id, last_interaction_date,
                 "Doctor referral", referee_id, created_at, created_at, panel
             ]
         );
@@ -165,7 +166,8 @@ export default class patientLeadController {
                 const sheetRow = [
                     city, hospital_name, ndm_contact_processed, referee_name, 
                     refree_phone_no, patient_name, patient_phone, _age, gender, 
-                    medical_condition, panel, null, created_at, booking_reference, 
+                    medical_condition, panel,aadhar_card_url || "N/A",
+                    pmjay_card_url || "N/A", null, created_at, booking_reference, 
                     `${appointment_date} ${appointment_time}`, "Doctor referral", 
                     current_disposition, last_interaction_date
                 ];
@@ -641,5 +643,34 @@ export default class patientLeadController {
         }
 
         res.status(200).json(new apiResponse(200, deleteResult.rows[0], "OPD booking and its disposition logs successfully deleted"));
+    });
+
+    uploadOpdDocument = asyncHandler(async (req, res) => {
+        const file = req.file;
+        if (!file) {
+            throw new apiError(400, "No file uploaded.");
+        }
+
+        try {
+            // 1. Upload the file from its temporary path to Google Drive
+            const links = await uploadAndGetLink(file.path, file.mimetype);
+            
+            // 2. Delete the temporary file from the server
+            await fs.unlink(file.path);
+
+            // 3. Return the Google Drive link to the frontend
+            res.status(200).json(new apiResponse(
+                200, 
+                { url: links.directLink }, // Send the direct download link
+                "Document uploaded successfully"
+            ));
+
+        } catch (uploadError) {
+            // If upload fails, still try to delete the temp file
+            try { await fs.unlink(file.path); } catch (e) { /* ignore */ }
+            
+            console.error("Google Drive Upload Error:", uploadError);
+            throw new apiError(500, "Failed to upload file to Google Drive.", [], uploadError.stack);
+        }
     });
 }
