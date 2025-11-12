@@ -12,7 +12,7 @@ function Home() {
 
   return (
     <div className="h-full w-full bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
-      {/* Header */}
+      {/* Header (No changes here) */}
       <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
@@ -41,7 +41,7 @@ function Home() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
-        {/* Welcome Section */}
+        {/* Welcome Section (No changes here) */}
         <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/30 rounded-2xl p-6 sm:p-8 mb-8">
           <div className="flex items-center space-x-4">
             <div className="w-16 h-16 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
@@ -57,9 +57,11 @@ function Home() {
           </div>
         </div>
 
-        {/* Quick Actions Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Book OPD Card */}
+        {/* --- MODIFIED Quick Actions Grid --- */}
+        {/* I've changed this to grid-cols-3 to fit the new card */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          
+          {/* 1. Book OPD Card (No change) */}
           <Link to="/book-opd" className="group">
             <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-cyan-500 transition-all duration-300 transform hover:scale-[1.02] hover:shadow-2xl hover:shadow-cyan-500/20">
               <div className="flex items-start justify-between mb-4">
@@ -85,7 +87,7 @@ function Home() {
             </div>
           </Link>
 
-          {/* Log Meeting Card */}
+          {/* 2. Log Meeting Card (No change) */}
           <Link to="/log-meeting" className="group">
             <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-blue-500 transition-all duration-300 transform hover:scale-[1.02] hover:shadow-2xl hover:shadow-blue-500/20">
               <div className="flex items-start justify-between mb-4">
@@ -110,9 +112,37 @@ function Home() {
               </div>
             </div>
           </Link>
+          
+          {/* --- 3. NEW "Update Patient Phone" CARD --- */}
+          <Link to="/update-patient-phone" className="group">
+            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-yellow-500 transition-all duration-300 transform hover:scale-[1.02] hover:shadow-2xl hover:shadow-yellow-500/20">
+              <div className="flex items-start justify-between mb-4">
+                <div className="w-14 h-14 bg-gradient-to-br from-yellow-500 to-orange-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                  </svg>
+                </div>
+                <svg className="w-6 h-6 text-gray-600 group-hover:text-yellow-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2">Update Patient Phone</h3>
+              <p className="text-gray-400 text-sm mb-4">
+                Find a patient by their Unique ID and update their contact number
+              </p>
+              <div className="flex items-center text-yellow-400 text-sm font-medium group-hover:translate-x-2 transition-transform">
+                <span>Get Started</span>
+                <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+              </div>
+            </div>
+          </Link>
+          {/* --- END NEW CARD --- */}
+
         </div>
 
-        {/* Quick Stats (Optional Enhancement) */}
+        {/* Quick Stats (No changes here) */}
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4">
             <div className="flex items-center space-x-3">
@@ -158,7 +188,7 @@ function Home() {
         </div>
       </main>
 
-      {/* Footer */}
+      {/* Footer (No changes here) */}
       <footer className="bg-gray-800/30 border-t border-gray-700 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-sm text-gray-400">
           <p>© 2025 Medpho Healthcare. All rights reserved.</p>

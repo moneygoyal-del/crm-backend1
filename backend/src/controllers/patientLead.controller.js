@@ -533,6 +533,21 @@ export default class patientLeadController {
             throw new apiError(400, "Provide either 'id' or 'booking_reference' to identify the booking for update.");
         }
 
+        let old_patient_phone = null;
+        if (patient_phone) {
+            try {
+                const oldData = await pool.query(
+                    "SELECT patient_phone FROM opd_bookings WHERE booking_reference = $1",
+                    [booking_reference]
+                );
+                if (oldData.rows.length > 0) {
+                    old_patient_phone = oldData.rows[0].patient_phone;
+                }
+            } catch (e) {
+                console.error("Could not fetch old phone number for comparison.", e.message);
+            }
+        }
+
         const updated_at = new Date().toISOString();
         const updateFields = [];
         const queryParams = [];
@@ -595,17 +610,33 @@ export default class patientLeadController {
         }
 
         const updateQuery = `
-            UPDATE opd_bookings 
-            SET ${updateFields.join(', ')} 
-            WHERE ${whereClause}
-            RETURNING id, booking_reference, patient_name, updated_at
-        `;
+        UPDATE opd_bookings 
+        SET ${updateFields.join(', ')} 
+        WHERE ${whereClause}
+        RETURNING id, booking_reference, patient_name, updated_at, patient_phone
+    `;
 
         const updatedResult = await pool.query(updateQuery, queryParams);
 
         if (updatedResult.rowCount === 0) {
             throw new apiError(404, "OPD booking not found for update.");
         }
+
+        // Check if patient_phone was one of the fields to update AND it's different from the old one
+        const new_phone_updated = updatedResult.rows[0].patient_phone;
+        if (patient_phone && old_patient_phone && new_phone_updated !== old_patient_phone) {
+            console.log(`Queueing phone number update for sheet: ${booking_reference}`);
+            
+
+            addToSheetQueue("UPDATE_PATIENT_PHONE", {
+                booking_reference: booking_reference,
+                new_phone: new_phone_updated
+            }).catch(err => {
+                // Log the error, but don't fail the request
+                console.error(`Failed to add UPDATE_PATIENT_PHONE job to queue: ${err.message}`);
+            });
+        }
+       
 
         res.status(200).json(new apiResponse(200, updatedResult.rows[0], "OPD booking successfully updated"));
     });
@@ -672,5 +703,27 @@ export default class patientLeadController {
             console.error("Google Drive Upload Error:", uploadError);
             throw new apiError(500, "Failed to upload file to Google Drive.", [], uploadError.stack);
         }
+    });
+
+    getPatientPhoneByRef = asyncHandler(async (req, res) => {
+        const { booking_reference } = req.params;
+        if (!booking_reference) {
+            throw new apiError(400, "Booking reference is required");
+        }
+
+        const result = await pool.query(
+            "SELECT patient_phone FROM opd_bookings WHERE booking_reference = $1",
+            [booking_reference]
+        );
+
+        if (result.rows.length === 0) {
+            throw new apiError(404, "Patient not found with this unique ID.");
+        }
+
+        res.status(200).json(new apiResponse(
+            200, 
+            { patient_phone: result.rows[0].patient_phone }, 
+            "Patient phone fetched"
+        ));
     });
 }

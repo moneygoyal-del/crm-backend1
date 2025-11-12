@@ -11,7 +11,8 @@ router.route("/create").post(PatientLeadController.createPatientLead);
 router.route("/createBatchOPD").post(upload.single('leads'),PatientLeadController.createPatientLeadBatchUpload);
 router.route("/createBatchDispositionLogs").post(upload.single('dispositions'),PatientLeadController.createDispositionLogBatchUpload); 
 router.route("/delete").delete(PatientLeadController.deletePatientLead);
-router.route("/update").put(PatientLeadController.updatePatientLead);
+router.route("/get-phone/:booking_reference").get(verifyJWT, PatientLeadController.getPatientPhoneByRef);
+router.route("/update").put(verifyJWT,PatientLeadController.updatePatientLead);
 
 router.route("/create-web").post(verifyJWT, PatientLeadController.createOpdBookingFromWeb);
 
