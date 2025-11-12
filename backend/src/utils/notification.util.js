@@ -233,19 +233,33 @@ const getHospitalGroupId = async (hospitalName) => {
 
 
 export const sendDoctorMeetingNotification = async (doctorName, ndManagerName, doctorPhoneNumber) => {
-    // This function mimics your Google Apps Script logic
+ 
     const url = 'https://backend.aisensy.com/campaign/t1/api/v2';
+    // console.log(doctorName,ndManagerName,doctorPhoneNumber)
 
+  
     const payload = {
-        "apiKey": process.env.AISENSY_API_KEY, // Make sure this is in your .env
+        "apiKey": process.env.AISENSY_API_KEY, 
         "campaignName": "Doctor_Meeting_TypoCorrected",
-        "destination": `91${doctorPhoneNumber}`, // The doctor's phone number
+        "destination": `91${doctorPhoneNumber}`,
         "userName": "Medpho 2842",
         "templateParams": [
             doctorName,
             ndManagerName
-        ]
+        ],
+
+       "source": "new-landing-page form",
+  "media": {},
+  "buttons": [],
+  "carouselCards": [],
+  "location": {},
+  "attributes": {},
+  "paramsFallbackValue": {
+    "FirstName": "user"
+  }
+
     };
+
 
     try {
         await axios.post(url, payload, {

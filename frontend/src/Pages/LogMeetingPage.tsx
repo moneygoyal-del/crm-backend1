@@ -3,13 +3,21 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import axios from 'axios';
 
-// --- NEW: Helper to get today's date for the form ---
+// Helper to get today's date for the form
 const getTodayDate = () => new Date().toISOString().split("T")[0];
+
+// List of facilities
+const FACILITIES_LIST = [
+    'Medicines', 
+    'Sugar', 
+    'Blood Pressure', 
+    'IPD/Injections'
+];
 
 export default function LogMeetingPage() {
     const navigate = useNavigate();
     
-    // --- 1. UPDATED State for ALL form fields ---
+    // --- 1. State for ALL form fields ---
     const [formData, setFormData] = useState({
         doctor_name: '',
         doctor_phone_number: '',
@@ -22,10 +30,10 @@ export default function LogMeetingPage() {
         comments_by_ndm: '',
         chances_of_getting_leads: 'medium',
         facilities: [] as string[],
-        timestamp_of_the_meeting: getTodayDate() // Use helper
+        timestamp_of_the_meeting: getTodayDate()
     });
 
-    // --- 2. NEW State for file/GPS uploads ---
+    // --- 2. State for file/GPS uploads ---
     const [clinicImageLink, setClinicImageLink] = useState<string | null>(null);
     const [selfieImageLink, setSelfieImageLink] = useState<string | null>(null);
     const [isUploadingClinic, setIsUploadingClinic] = useState(false);
@@ -38,10 +46,9 @@ export default function LogMeetingPage() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    const userString = localStorage.getItem('user');
-    const user = userString ? JSON.parse(userString) : { name: "User" };
+    const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
-    // --- 3. NEW Effect to get GPS on page load ---
+    // --- 3. Effect to get GPS on page load ---
     useEffect(() => {
         setGpsError('');
         if (navigator.geolocation) {
@@ -53,15 +60,15 @@ export default function LogMeetingPage() {
                     });
                 },
                 (err) => {
-                    setGpsError('GPS permission denied. Please enable it.');
+                    setGpsError('GPS permission denied. Please enable it to submit.');
                     console.error("GPS Error:", err.message);
                 },
                 { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
             );
         } else {
-            setGpsError("GPS is not supported by this browser.");
+            setGpsError("GPS is not supported. Please use a modern browser.");
         }
-    }, []); // Runs once on page load
+    }, []);
 
     // --- 4. Form field change handlers ---
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -79,7 +86,7 @@ export default function LogMeetingPage() {
         });
     };
 
-    // --- 5. NEW: File upload/remove handlers ---
+    // --- 5. File upload/remove handlers (from BookOpdPage) ---
     const handleFileUpload = async (
         file: File,
         docType: 'clinic' | 'selfie'
@@ -94,6 +101,7 @@ export default function LogMeetingPage() {
         fileFormData.append('document', file);
 
         try {
+            // Use the correct route from doctor.routes.js
             const res = await api.post('/doctors/upload-meeting-photo', fileFormData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
@@ -122,7 +130,7 @@ export default function LogMeetingPage() {
         }
     };
 
-    // --- 6. UPDATED: Form submit handler ---
+    // --- 6. Form submit handler ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -149,10 +157,11 @@ export default function LogMeetingPage() {
 
         // Format timestamp as "dd/mm/yyyy HH:MM:SS"
         const date = new Date(formData.timestamp_of_the_meeting.replace(/-/g, '/'));
-        const localTime = new Date().toTimeString().split(' ')[0];
+        const localTime = new Date().toTimeString().split(' ')[0]; // Get current time
         const formattedTimestamp = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${localTime}`;
         
-        const gpsLink = `https://www.google.com/maps?q=${gpsLocation.lat},${gpsLocation.lon}`;
+        // Use a consistent GPS link format
+        const gpsLink = `https://maps.google.com/?q=${gpsLocation.lat},${gpsLocation.lon}`;
 
         const payload = {
             ...formData,
@@ -162,12 +171,12 @@ export default function LogMeetingPage() {
             latitude: gpsLocation.lat,
             longitude: gpsLocation.lon,
             gps_location_of_the_clinic: gpsLink,
-            facilities: formData.facilities.join(', '), // Convert array to string
+            facilities: formData.facilities.join(', '),
         };
 
         try {
             const response = await api.post('/doctors/create-web', payload);
-            setSuccess(`Success! Meeting with Dr. ${response.data.data.doctor_name} logged.`);
+            setSuccess(`✅ Success! Meeting with Dr. ${response.data.data.doctor_name} logged.`);
             
             // Reset form
             setFormData({
@@ -177,10 +186,8 @@ export default function LogMeetingPage() {
                 chances_of_getting_leads: 'medium', facilities: [],
                 timestamp_of_the_meeting: getTodayDate()
             });
-            setClinicImageLink(null);
-            setSelfieImageLink(null);
-            (document.getElementById('clinic-upload') as HTMLInputElement).value = "";
-            (document.getElementById('selfie-upload') as HTMLInputElement).value = "";
+            handleFileRemove('clinic');
+            handleFileRemove('selfie');
             
             setTimeout(() => setSuccess(''), 5000);
         } catch (err: unknown) {
@@ -193,18 +200,25 @@ export default function LogMeetingPage() {
         setLoading(false);
     };
 
+    // --- 7. NEW: Enhanced JSX ---
+    const inputStyles = "w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
+    const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
+    const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
+    const fileInputStyles = "w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50";
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
             {/* Header */}
             <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
-                {/* ... (Header JSX is unchanged) ... */}
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
                     <div className="flex items-center justify-between">
-                        <button onClick={() => navigate(-1)} className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors">
+                        <button
+                            onClick={() => navigate(-1)}
+                            className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors"
+                        >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                             </svg>
-                            <span className="font-medium">Back</span>
                         </button>
                         <div className="flex items-center space-x-2 text-sm text-gray-400">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -217,11 +231,10 @@ export default function LogMeetingPage() {
             </header>
 
             {/* Main Content */}
-            <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <main className="max-w-4xl w-full h-full mx-auto px-2 md:px-6 lg:px-8 py-8">
                 <div className="bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
                     {/* Page Header */}
-                    <div className="bg-gradient-to-r from-blue-500 to-purple-500 px-6 py-6">
-                        {/* ... (Page Header JSX is unchanged) ... */}
+                    <div className="bg-gradient-to-r from-blue-500 to-purple-500 px-3 py-6">
                         <div className="flex items-center space-x-3">
                             <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
                                 <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -235,99 +248,96 @@ export default function LogMeetingPage() {
                         </div>
                     </div>
 
-                    {/* Alerts (including new GPS error) */}
+                    {/* Alerts */}
                     <div className="px-6 pt-6">
                         {error && (
                             <div className="mb-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200 text-sm animate-shake">
-                                {/* ... (Error SVG and message) ... */}
-                                {error}
+                                <div className="flex items-center">
+                                    <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
+                                    {error}
+                                </div>
                             </div>
                         )}
                         {success && (
                             <div className="mb-6 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">
-                                {/* ... (Success SVG and message) ... */}
-                                {success}
+                                <div className="flex items-center">
+                                    <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                                    {success}
+                                </div>
                             </div>
                         )}
-                        {gpsError && (
+                        {gpsError && !gpsLocation && (
                              <div className="mb-6 p-4 bg-yellow-900/50 border border-yellow-500 rounded-lg text-yellow-200 text-sm">
-                                {gpsError}
+                                <div className="flex items-center">
+                                    <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.636-1.182 2.85-1.182 3.486 0l5.58 10.362c.636 1.182-.48 2.539-1.743 2.539H4.42c-1.263 0-2.379-1.357-1.743-2.539l5.58-10.362zM10 12a1 1 0 100-2 1 1 0 000 2zm0 2a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" /></svg>
+                                    {gpsError}
+                                </div>
                             </div>
                         )}
                     </div>
 
                     {/* Form */}
                     <form onSubmit={handleSubmit} className="p-6 space-y-6">
-                        {/* Doctor Details */}
+                        
+                        {/* Section 1: Doctor Information */}
                         <div className="space-y-4">
-                            <h3 className="text-lg font-semibold text-white">Doctor Information</h3>
+                            <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
+                                <svg className="w-5 h-5 mr-2 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                                Doctor Information
+                            </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                                        Doctor's Name <span className="text-red-400">*</span>
-                                    </label>
-                                    <input type="text" name="doctor_name" value={formData.doctor_name} onChange={handleChange} className="w-full" placeholder="Enter doctor's full name" required />
+                                    <label className={labelStyles}>Doctor's Name <span className="text-red-400">*</span></label>
+                                    <input type="text" name="doctor_name" value={formData.doctor_name} onChange={handleChange} className={inputStyles} placeholder="Enter doctor's full name" required />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                                        Doctor's Phone <span className="text-red-400">*</span>
-                                    </label>
-                                    <input type="tel" name="doctor_phone_number" value={formData.doctor_phone_number} onChange={handleChange} maxLength={10} className="w-full" placeholder="10-digit phone" required />
+                                    <label className={labelStyles}>Doctor's Phone <span className="text-red-400">*</span></label>
+                                    <input type="tel" name="doctor_phone_number" value={formData.doctor_phone_number} onChange={handleChange} maxLength={10} className={inputStyles} placeholder="10-digit phone" required />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Locality</label>
-                                    <input type="text" name="locality" value={formData.locality} onChange={handleChange} className="w-full" placeholder="Enter locality/area" />
+                                    <label className={labelStyles}>Locality</label>
+                                    <input type="text" name="locality" value={formData.locality} onChange={handleChange} className={inputStyles} placeholder="Enter clinic area or locality" />
                                 </div>
                             </div>
                         </div>
 
-                        {/* Meeting Details */}
+                        {/* Section 2: Meeting Details */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
-                            <h3 className="text-lg font-semibold text-white">Meeting Details</h3>
+                             <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
+                                <svg className="w-5 h-5 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                Meeting Details
+                            </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Date of Meeting</label>
-                                    <input type="date" name="timestamp_of_the_meeting" value={formData.timestamp_of_the_meeting} onChange={handleChange} max={getTodayDate()} className="w-full" />
+                                    <label className={labelStyles}>Date of Meeting</label>
+                                    <input type="date" name="timestamp_of_the_meeting" value={formData.timestamp_of_the_meeting} onChange={handleChange} max={getTodayDate()} className={inputStyles} />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Duration (minutes)</label>
-                                    <input type="number" name="duration_of_meeting" value={formData.duration_of_meeting} onChange={handleChange} min="1" className="w-full" />
+                                    <label className={labelStyles}>Duration (minutes)</label>
+                                    <input type="number" name="duration_of_meeting" value={formData.duration_of_meeting} onChange={handleChange} min="1" className={inputStyles} />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Avg. OPD Count (Daily)</label>
-                                    <input type="number" name="opd_count" value={formData.opd_count} onChange={handleChange} min="0" className="w-full" />
+                                    <label className={labelStyles}>Avg. OPD Count (Daily)</label>
+                                    <input type="number" name="opd_count" value={formData.opd_count} onChange={handleChange} min="0" className={inputStyles} placeholder="e.g., 25" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Patients During Meeting</label>
-                                    <input type="number" name="numPatientsDuringMeeting" value={formData.numPatientsDuringMeeting} onChange={handleChange} min="0" className="w-full" />
+                                    <label className={labelStyles}>Patients During Meeting</label>
+                                    <input type="number" name="numPatientsDuringMeeting" value={formData.numPatientsDuringMeeting} onChange={handleChange} min="0" className={inputStyles} />
                                 </div>
+                                
                                 <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Doctor's Queries</label>
-                                    <textarea name="queries_by_the_doctor" value={formData.queries_by_the_doctor} onChange={handleChange} rows={3} className="w-full" placeholder="What did the doctor ask or discuss?" />
-                                </div>
-                                <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Comments/Notes</label>
-                                    <textarea name="comments_by_ndm" value={formData.comments_by_ndm} onChange={handleChange} rows={3} className="w-full" placeholder="Additional comments or observations" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Rating (1-5)</label>
-                                    <input type="number" name="rating" value={formData.rating} onChange={handleChange} min="1" max="5" className="w-full" />
-                                </div>
-                                <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Chances of Getting Leads</label>
-                                    {/* ... (Radio buttons for high/medium/low) ... */}
-                                    <select name="chances_of_getting_leads" value={formData.chances_of_getting_leads} onChange={handleChange} className="w-full">
-                                        <option value="high">High</option>
-                                        <option value="medium">Medium</option>
-                                        <option value="low">Low</option>
-                                    </select>
-                                </div>
-                                <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">Facilities Available</label>
-                                    <div className="grid grid-cols-2 gap-2 text-sm text-gray-300">
-                                        {['Medicines', 'Sugar', 'Blood Pressure', 'IPD/Injections'].map(facility => (
-                                            <label key={facility} className="flex items-center space-x-2">
-                                                <input type="checkbox" name="facilities" value={facility} checked={formData.facilities.includes(facility)} onChange={handleCheckboxChange} />
+                                    <label className={labelStyles}>Facilities Available</label>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 text-sm text-gray-200">
+                                        {FACILITIES_LIST.map(facility => (
+                                            <label key={facility} className="flex items-center space-x-2 p-2 bg-gray-700/50 rounded-lg">
+                                                <input 
+                                                    type="checkbox" 
+                                                    name="facilities" 
+                                                    value={facility} 
+                                                    checked={formData.facilities.includes(facility)} 
+                                                    onChange={handleCheckboxChange}
+                                                    className="rounded text-blue-500 bg-gray-800 border-gray-600 focus:ring-blue-500"
+                                                />
                                                 <span>{facility}</span>
                                             </label>
                                         ))}
@@ -336,21 +346,58 @@ export default function LogMeetingPage() {
                             </div>
                         </div>
 
-                        {/* Photo Uploads */}
+                         {/* Section 3: Notes & Vibe */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
-                            <h3 className="text-lg font-semibold text-white">Photos</h3>
+                             <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
+                                <svg className="w-5 h-5 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                Notes & Vibe Check
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="md:col-span-2">
+                                    <label className={labelStyles}>Doctor's Queries</label>
+                                    <textarea name="queries_by_the_doctor" value={formData.queries_by_the_doctor} onChange={handleChange} rows={3} className={inputStyles} placeholder="What did the doctor ask or discuss?" />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className={labelStyles}>Your Comments/Notes</label>
+                                    <textarea name="comments_by_ndm" value={formData.comments_by_ndm} onChange={handleChange} rows={3} className={inputStyles} placeholder="Additional comments or observations" />
+                                </div>
+                                <div>
+                                    <label className={labelStyles}>Rating (1-5)</label>
+                                    <select name="rating" value={formData.rating} onChange={handleChange} className={selectStyles}>
+                                        <option value="1">1 - Very Poor</option>
+                                        <option value="2">2 - Poor</option>
+                                        <option value="3">3 - Average</option>
+                                        <option value="4">4 - Good</option>
+                                        <option value="5">5 - Excellent</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className={labelStyles}>Chances of Getting Leads</label>
+                                    <select name="chances_of_getting_leads" value={formData.chances_of_getting_leads} onChange={handleChange} className={selectStyles}>
+                                        <option value="high">High</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="low">Low</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Section 4: Photo Proof */}
+                        <div className="space-y-4 pt-6 border-t border-gray-700">
+                            <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
+                                <svg className="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                Photo Proof
+                            </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {/* Clinic Photo */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                                        Clinic Photo <span className="text-red-400">*</span>
-                                    </label>
+                                    <label className={labelStyles}>Clinic Photo <span className="text-red-400">*</span></label>
                                     {!clinicImageLink && !isUploadingClinic && (
-                                        <input id="clinic-upload" type="file" accept="image/*" capture="environment" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'clinic')} disabled={loading || isUploadingClinic || isUploadingSelfie} className="w-full" />
+                                        <input id="clinic-upload" type="file" accept="image/*" capture="environment" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'clinic')} disabled={loading || isUploadingClinic || isUploadingSelfie} className={fileInputStyles} />
                                     )}
-                                    {isUploadingClinic && <p className="text-xs text-yellow-400 mt-1">Uploading...</p>}
+                                    {isUploadingClinic && <p className="text-sm text-yellow-400 mt-2">Uploading clinic photo...</p>}
                                     {clinicImageLink && !isUploadingClinic && (
-                                        <div className="flex items-center justify-between p-2 bg-gray-700 rounded-lg">
+                                        <div className="flex items-center justify-between p-2.5 bg-gray-700 rounded-lg">
                                             <p className="text-sm text-green-400">Clinic Photo Uploaded ✓</p>
                                             <button type="button" onClick={() => handleFileRemove('clinic')} disabled={loading} className="text-xs font-medium text-red-400 hover:text-red-300">
                                                 Remove
@@ -360,15 +407,13 @@ export default function LogMeetingPage() {
                                 </div>
                                 {/* Selfie Photo */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                                        Selfie with Clinic <span className="text-red-400">*</span>
-                                    </label>
+                                    <label className={labelStyles}>Selfie with Clinic <span className="text-red-400">*</span></label>
                                     {!selfieImageLink && !isUploadingSelfie && (
-                                        <input id="selfie-upload" type="file" accept="image/*" capture="user" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'selfie')} disabled={loading || isUploadingClinic || isUploadingSelfie} className="w-full" />
+                                        <input id="selfie-upload" type="file" accept="image/*" capture="user" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'selfie')} disabled={loading || isUploadingClinic || isUploadingSelfie} className={fileInputStyles} />
                                     )}
-                                    {isUploadingSelfie && <p className="text-xs text-yellow-400 mt-1">Uploading...</p>}
+                                    {isUploadingSelfie && <p className="text-sm text-yellow-400 mt-2">Uploading selfie...</p>}
                                     {selfieImageLink && !isUploadingSelfie && (
-                                        <div className="flex items-center justify-between p-2 bg-gray-700 rounded-lg">
+                                        <div className="flex items-center justify-between p-2.5 bg-gray-700 rounded-lg">
                                             <p className="text-sm text-green-400">Selfie Uploaded ✓</p>
                                             <button type="button" onClick={() => handleFileRemove('selfie')} disabled={loading} className="text-xs font-medium text-red-400 hover:text-red-300">
                                                 Remove
@@ -380,9 +425,23 @@ export default function LogMeetingPage() {
                         </div>
 
                         {/* Submit Button */}
-                        <div className="pt-6">
-                            <button type="submit" disabled={loading || isUploadingClinic || isUploadingSelfie || !!gpsError} className="w-full py-3 px-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-semibold rounded-lg">
-                                {loading ? "Submitting..." : "Log Meeting"}
+                        <div className="pt-6 border-t border-gray-700">
+                            <button
+                                type="submit"
+                                disabled={loading || isUploadingClinic || isUploadingSelfie || !!gpsError}
+                                className="w-full py-3 px-4 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                            >
+                                {loading ? (
+                                    <span className="flex items-center justify-center">
+                                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Submitting...
+                                    </span>
+                                ) : (
+                                    "Log Meeting"
+                                )}
                             </button>
                         </div>
                     </form>
