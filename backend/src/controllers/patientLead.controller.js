@@ -5,9 +5,10 @@ import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
 import apiError from "../utils/apiError.utils.js";
 import { addToSheetQueue } from "../utils/sheetQueue.util.js"; 
-import { sendOpdNotifications } from "../utils/notification.util.js";
+import { sendOpdNotifications,fetchQrCodeUrl,sendAiSensy } from "../utils/notification.util.js";
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import fs from "fs/promises"; 
+
 
 export default class patientLeadController {
 
@@ -532,6 +533,24 @@ export default class patientLeadController {
         if (!id && !booking_reference) {
             throw new apiError(400, "Provide either 'id' or 'booking_reference' to identify the booking for update.");
         }
+        
+        const identifier_key = id ? 'id' : 'booking_reference';
+        const identifier_value = id ? id : booking_reference;
+
+        let old_patient_phone = null;
+        if (patient_phone) {
+            try {
+                const oldData = await pool.query(
+                    `SELECT patient_phone FROM opd_bookings WHERE ${identifier_key} = $1`,
+                    [identifier_value]
+                );
+                if (oldData.rows.length > 0) {
+                    old_patient_phone = oldData.rows[0].patient_phone;
+                }
+            } catch (e) {
+                console.error("Could not fetch old phone number for comparison.", e.message);
+            }
+        }
 
         const updated_at = new Date().toISOString();
         const updateFields = [];
@@ -598,16 +617,72 @@ export default class patientLeadController {
             UPDATE opd_bookings 
             SET ${updateFields.join(', ')} 
             WHERE ${whereClause}
-            RETURNING id, booking_reference, patient_name, updated_at
-        `;
+            RETURNING *
+        `; // Return all fields
 
         const updatedResult = await pool.query(updateQuery, queryParams);
 
         if (updatedResult.rowCount === 0) {
             throw new apiError(404, "OPD booking not found for update.");
         }
+        
+        const updatedRow = updatedResult.rows[0];
+        
+        // --- RESPOND TO CLIENT FIRST ---
+        res.status(200).json(new apiResponse(200, {
+             id: updatedRow.id,
+             booking_reference: updatedRow.booking_reference,
+             patient_name: updatedRow.patient_name,
+             updated_at: updatedRow.updated_at
+        }, "OPD booking successfully updated"));
+        
+        // --- RUN BACKGROUND TASKS ---
+        const runBackgroundTasks = async () => {
+            try {
+                const new_phone_updated = updatedRow.patient_phone;
+                
+                if (patient_phone && old_patient_phone && new_phone_updated !== old_patient_phone) {
+                    
+                    // --- Task A: Queue Google Sheet Update ---
+                    console.log(`Queueing phone number update for sheet: ${updatedRow.booking_reference}`);
+                    await addToSheetQueue("UPDATE_PATIENT_PHONE", {
+                        booking_reference: updatedRow.booking_reference,
+                        new_phone: new_phone_updated
+                    });
 
-        res.status(200).json(new apiResponse(200, updatedResult.rows[0], "OPD booking successfully updated"));
+                    // --- Task B: Re-send *Patient Only* Notification ---
+                    console.log(`Triggering Patient-Only notification for phone update: ${updatedRow.booking_reference}`);
+                    
+                    const qrPatientData = {
+                        name: updatedRow.patient_name,
+                        age: updatedRow.age || "N/A",
+                        gender: updatedRow.gender || "N/A",
+                        credits: "0", // Not on opd_bookings, default to 0
+                        phoneNumber: updatedRow.patient_phone, // The NEW phone
+                        uniqueCode: updatedRow.booking_reference,
+                        timestamp: new Date().toISOString()
+                    };
+
+                    const qrCodeUrl = await fetchQrCodeUrl(qrPatientData);
+
+                    if (qrCodeUrl) {
+                        await sendAiSensy(
+                            updatedRow.patient_phone,  // to
+                            updatedRow.patient_name,   // name
+                            qrCodeUrl                  // mediaUrl
+                        );
+                        console.log(`Patient notification re-sent to new number: ${updatedRow.patient_phone}`);
+                    } else {
+                        console.error(`Skipping patient notification for ${updatedRow.booking_reference} because QR code generation failed.`);
+                    }
+                }
+            } catch (backgroundError) {
+                console.error("--- BACKGROUND TASK FAILED (Update Patient) ---");
+                console.error(backgroundError.message);
+            }
+        };
+        
+        runBackgroundTasks();
     });
 
 
@@ -672,5 +747,27 @@ export default class patientLeadController {
             console.error("Google Drive Upload Error:", uploadError);
             throw new apiError(500, "Failed to upload file to Google Drive.", [], uploadError.stack);
         }
+    });
+
+    getPatientPhoneByRef = asyncHandler(async (req, res) => {
+        const { booking_reference } = req.params;
+        if (!booking_reference) {
+            throw new apiError(400, "Booking reference is required");
+        }
+
+        const result = await pool.query(
+            "SELECT patient_phone FROM opd_bookings WHERE booking_reference = $1",
+            [booking_reference]
+        );
+
+        if (result.rows.length === 0) {
+            throw new apiError(404, "Patient not found with this unique ID.");
+        }
+
+        res.status(200).json(new apiResponse(
+            200, 
+            { patient_phone: result.rows[0].patient_phone }, 
+            "Patient phone fetched"
+        ));
     });
 }

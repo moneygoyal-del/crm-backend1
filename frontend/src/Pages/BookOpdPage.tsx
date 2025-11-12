@@ -217,8 +217,21 @@ export default function BookOpdPage() {
       
       setAadharUrl(null);
       setPmjayUrl(null);
-      (document.getElementById('aadhar-upload') as HTMLInputElement).value = "";
-      (document.getElementById('pmjay-upload') as HTMLInputElement).value = "";
+      // --- FIX IS HERE ---
+      // 1. Get the element
+      const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
+      // 2. Check if it exists before setting value
+      if (aadharInput) {
+        aadharInput.value = "";
+      }
+      
+      // 1. Get the element
+      const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
+      // 2. Check if it exists before setting value
+      if (pmjayInput) {
+        pmjayInput.value = "";
+      }
+      // --- END FIX ---
       
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
@@ -234,6 +247,7 @@ export default function BookOpdPage() {
           setError(err.response?.data?.message || "An error occurred.");
         }
       } else {
+        console.error("Non-Axios error during submit:", err);
         setError("Unexpected error occurred.");
       }
     } finally {
