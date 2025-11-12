@@ -22,7 +22,7 @@ const sendUltraMsg = async (to, body) => {
 };
 
 
-const sendAiSensy = async (to, name, mediaUrl) => {
+export const sendAiSensy = async (to, name, mediaUrl) => {
     const url = 'https://backend.aisensy.com/campaign/t1/api/v2';
     const payload = {
         "apiKey": process.env.AISENSY_API_KEY,
@@ -47,7 +47,7 @@ const sendAiSensy = async (to, name, mediaUrl) => {
 };
 
 
-const fetchQrCodeUrl = async (patientData) => {
+export const fetchQrCodeUrl = async (patientData) => {
     const baseUrl = "https://medpho-public.s3.amazonaws.com/patientinformation/patient-information.html?";
     const qrCodeUrlAPI = "https://backend.medpho.com/v1/qrCode/generateQRCode?url=";
 
