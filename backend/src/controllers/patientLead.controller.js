@@ -8,7 +8,7 @@ import { addToSheetQueue } from "../utils/sheetQueue.util.js";
 import { sendOpdNotifications,fetchQrCodeUrl,sendAiSensy } from "../utils/notification.util.js";
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import fs from "fs/promises"; 
-
+import path from "path";
 
 export default class patientLeadController {
 
@@ -181,8 +181,11 @@ export default class patientLeadController {
                 
                 if (aadharFile) {
                     try {
-                        console.log(`Uploading Aadhar for ${newOpdId}...`);
-                        const links = await uploadAndGetLink(aadharFile.path, aadharFile.mimetype);
+                        const fileExt = path.extname(aadharFile.originalname) || '.jpg';
+                        const aadharFileName = `${booking_reference}_aadhar${fileExt}`;
+                        console.log(`Uploading Aadhar for ${newOpdId} as ${aadharFileName}...`);
+                        
+                        const links = await uploadAndGetLink(aadharFile.path, aadharFile.mimetype, aadharFileName);
                         aadharDriveUrl = links.directLink;
                     } catch(uploadErr) {
                         console.error(`Aadhar upload failed for ${newOpdId}:`, uploadErr.message);
@@ -193,8 +196,11 @@ export default class patientLeadController {
                 
                 if (pmjayFile) {
                     try {
-                        console.log(`Uploading PMJAY for ${newOpdId}...`);
-                        const links = await uploadAndGetLink(pmjayFile.path, pmjayFile.mimetype);
+                        const fileExt = path.extname(pmjayFile.originalname) || '.jpg';
+                        const pmjayFileName = `${booking_reference}_pmjay${fileExt}`;
+                        console.log(`Uploading PMJAY for ${newOpdId} as ${pmjayFileName}...`);
+                        
+                        const links = await uploadAndGetLink(pmjayFile.path, pmjayFile.mimetype, pmjayFileName);
                         pmjayDriveUrl = links.directLink;
                     } catch(uploadErr) {
                         console.error(`PMJAY upload failed for ${newOpdId}:`, uploadErr.message);

@@ -9,6 +9,7 @@ import { processDoctorName } from "../helper/process_doctor_name.helper.js";
 import { addToSheetQueue } from "../utils/sheetQueue.util.js"; // <-- USE THE QUEUE
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import { sendDoctorMeetingNotification } from "../utils/notification.util.js";
+import path from "path";
 
 export default class doctorController {
     // --- THIS IS YOUR ORIGINAL FUNCTION (UNCHANGED) ---
@@ -982,18 +983,27 @@ export default class doctorController {
 
     uploadMeetingPhoto = asyncHandler(async (req, res) => {
         const file = req.file;
+        const user = req.user; // Get the logged-in user from verifyJWT
+
         if (!file) {
             throw new apiError(400, "No file uploaded.");
         }
+        if (!user || !user.id) {
+            throw new apiError(401, "User not authenticated.");
+        }
 
         try {
-            // 1. Upload the file from its temporary path to Google Drive
-            const links = await uploadAndGetLink(file.path, file.mimetype);
+            // --- 2. CREATE DYNAMIC FILENAME ---
+            const fileExt = path.extname(file.originalname) || '.jpg';
+            const uniqueName = `${user.id}_${Date.now()}${fileExt}`;
             
-            // 2. Delete the temporary file from the server
+            // --- 3. PASS FILENAME TO UPLOADER ---
+            const links = await uploadAndGetLink(file.path, file.mimetype, uniqueName);
+            
+            // 4. Delete the temporary file from the server
             await fs.unlink(file.path);
 
-            // 3. Return the Google Drive link to the frontend
+            // 5. Return the Google Drive link to the frontend
             res.status(200).json(new apiResponse(
                 200, 
                 { url: links.directLink }, // Send the direct download link

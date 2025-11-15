@@ -2,7 +2,7 @@
 import { google } from 'googleapis';
 import { createReadStream } from 'fs';
 
-export async function uploadAndGetLink(imagePath,mimeType='image/jpeg') {
+export async function uploadAndGetLink(imagePath, mimeType='image/jpeg', fileName = 'upload.txt') {
 
     if (process.env.PARENT) {
         console.log("PARENT FOLDER ID BEING USED:", process.env.PARENT);
@@ -17,7 +17,8 @@ export async function uploadAndGetLink(imagePath,mimeType='image/jpeg') {
     const drive = google.drive({ version: 'v3', auth });
 
     const fileMetadata = {
-        name: 'backend-image.txt',
+        // --- MODIFICATION: Use the dynamic fileName ---
+        name: fileName,
     };
     
     // Only include parents if PARENT folder ID is defined
@@ -37,7 +38,7 @@ export async function uploadAndGetLink(imagePath,mimeType='image/jpeg') {
     });
 
     const fileId = file.data.id;
-    console.log('File Uploaded, ID:', fileId);
+    console.log(`File Uploaded: ${fileName}, ID: ${fileId}`);
 
     // 3. Set Permissions
     await drive.permissions.create({
