@@ -47,11 +47,10 @@ export default function LogMeetingPage() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    // --- 4. NEW: State for doctor auto-fill ---
+    // --- 4. State for doctor auto-fill ---
     const [isFetchingDoctor, setIsFetchingDoctor] = useState(false);
     const [isDoctorFound, setIsDoctorFound] = useState(false);
     const [doctorError, setDoctorError] = useState('');
-    // --- END NEW STATE ---
 
     const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
@@ -93,7 +92,7 @@ export default function LogMeetingPage() {
         });
     };
 
-    // --- 7. NEW: Function to fetch doctor details by phone ---
+    // --- 7. MODIFIED: Function to fetch doctor details by phone ---
     const fetchDoctorDetails = async () => {
         const phone = formData.doctor_phone_number;
         
@@ -111,15 +110,15 @@ export default function LogMeetingPage() {
         setIsDoctorFound(false);
 
         try {
-            // Use the same endpoint as BookOpdPage
+            // This endpoint now returns { name: "...", locality: "..." }
             const res = await api.get(`/doctors/get-by-phone/${phone}`);
             const { name, locality } = res.data.data;
             
-            // Auto-fill form data
+            // Auto-fill form data with fetched values
             setFormData(prev => ({ 
                 ...prev, 
                 doctor_name: name,
-                locality: locality 
+                locality: locality || '' // Use fetched locality or empty string
             }));
             setIsDoctorFound(true); // Lock the fields
 
@@ -133,7 +132,7 @@ export default function LogMeetingPage() {
             setIsFetchingDoctor(false);
         }
     };
-    // --- END NEW FUNCTION ---
+    // --- END MODIFICATION ---
 
 
     // --- 8. File upload/remove handlers (from BookOpdPage) ---
@@ -239,10 +238,9 @@ export default function LogMeetingPage() {
             handleFileRemove('clinic');
             handleFileRemove('selfie');
             
-            // --- NEW: Reset doctor lookup state ---
+            // Reset doctor lookup state
             setIsDoctorFound(false);
             setDoctorError('');
-            // --- END NEW ---
             
             setTimeout(() => setSuccess(''), 5000);
         } catch (err: unknown) {
@@ -366,10 +364,11 @@ export default function LogMeetingPage() {
                                         name="doctor_name" 
                                         value={formData.doctor_name} 
                                         onChange={handleChange} 
-                                        className={inputStyles} 
-                                        placeholder={isDoctorFound ? "Auto-filled" : "Enter doctor's full name"} 
+                                        className={`${inputStyles} ${isDoctorFound ? 'text-gray-400' : 'text-white'}`} 
+                                        placeholder={"Enter doctor's full name"}
                                         required 
-                                        disabled={isDoctorFound || loading} // <-- Lock if found
+                                        readOnly={isDoctorFound} // <-- Make readOnly, not disabled
+                                        disabled={loading}
                                     />
                                 </div>
                                 <div>
@@ -379,9 +378,10 @@ export default function LogMeetingPage() {
                                         name="locality" 
                                         value={formData.locality} 
                                         onChange={handleChange} 
-                                        className={inputStyles} 
-                                        placeholder={isDoctorFound ? "Auto-filled" : "Enter clinic area or locality"} 
-                                        disabled={isDoctorFound || loading} // <-- Lock if found
+                                        className={`${inputStyles} ${isDoctorFound ? 'text-gray-400' : 'text-white'}`} 
+                                        placeholder={"Enter clinic area or locality"}
+                                        readOnly={isDoctorFound} // <-- Make readOnly, not disabled
+                                        disabled={loading}
                                     />
                                 </div>
                             </div>

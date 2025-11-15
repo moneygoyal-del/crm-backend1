@@ -1028,8 +1028,9 @@ export default class doctorController {
 
         const phone_processed = process_phone_no(phone);
 
+        // --- MODIFICATION: Select 'location' as well ---
         const result = await pool.query(
-            "SELECT first_name, last_name FROM doctors WHERE phone = $1",
+            "SELECT first_name, last_name, location FROM doctors WHERE phone = $1",
             [phone_processed]
         );
 
@@ -1040,10 +1041,17 @@ export default class doctorController {
         const doctor = result.rows[0];
         const fullName = `${doctor.first_name} ${doctor.last_name || ''}`.trim();
 
+        // --- MODIFICATION: Extract locality from the JSONB 'location' field ---
+        let locality = "";
+        if (doctor.location && typeof doctor.location === 'object' && doctor.location.locality) {
+            locality = doctor.location.locality;
+        }
+
         res.status(200).json(new apiResponse(
             200, 
-            { name: fullName }, 
-            "Doctor name fetched successfully"
+            // --- MODIFICATION: Return locality in the response ---
+            { name: fullName, locality: locality }, 
+            "Doctor details fetched successfully"
         ));
     });
     
