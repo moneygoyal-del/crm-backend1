@@ -42,13 +42,20 @@ export default function LogMeetingPage() {
     const [gpsLocation, setGpsLocation] = useState<{lat: number, lon: number} | null>(null);
     const [gpsError, setGpsError] = useState('');
 
+    // --- 3. State for form submission and UI ---
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
+    // --- 4. NEW: State for doctor auto-fill ---
+    const [isFetchingDoctor, setIsFetchingDoctor] = useState(false);
+    const [isDoctorFound, setIsDoctorFound] = useState(false);
+    const [doctorError, setDoctorError] = useState('');
+    // --- END NEW STATE ---
+
     const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
-    // --- 3. Effect to get GPS on page load ---
+    // --- 5. Effect to get GPS on page load ---
     useEffect(() => {
         setGpsError('');
         if (navigator.geolocation) {
@@ -70,7 +77,7 @@ export default function LogMeetingPage() {
         }
     }, []);
 
-    // --- 4. Form field change handlers ---
+    // --- 6. Form field change handlers ---
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
@@ -86,7 +93,50 @@ export default function LogMeetingPage() {
         });
     };
 
-    // --- 5. File upload/remove handlers (from BookOpdPage) ---
+    // --- 7. NEW: Function to fetch doctor details by phone ---
+    const fetchDoctorDetails = async () => {
+        const phone = formData.doctor_phone_number;
+        
+        // Only fetch if it's a 10-digit number
+        if (phone.length !== 10) {
+            setDoctorError("");
+            setIsDoctorFound(false);
+            // Clear fields if phone number is changed and invalid
+            setFormData(prev => ({ ...prev, doctor_name: '', locality: '' }));
+            return;
+        }
+
+        setIsFetchingDoctor(true);
+        setDoctorError("");
+        setIsDoctorFound(false);
+
+        try {
+            // Use the same endpoint as BookOpdPage
+            const res = await api.get(`/doctors/get-by-phone/${phone}`);
+            const { name, locality } = res.data.data;
+            
+            // Auto-fill form data
+            setFormData(prev => ({ 
+                ...prev, 
+                doctor_name: name,
+                locality: locality 
+            }));
+            setIsDoctorFound(true); // Lock the fields
+
+        } catch (err) {
+            console.error("Failed to fetch doctor:", err);
+            setDoctorError("Doctor not found. Please enter details.");
+            setIsDoctorFound(false); // Unlock fields
+            // Clear fields so user can type
+            setFormData(prev => ({ ...prev, doctor_name: '', locality: '' }));
+        } finally {
+            setIsFetchingDoctor(false);
+        }
+    };
+    // --- END NEW FUNCTION ---
+
+
+    // --- 8. File upload/remove handlers (from BookOpdPage) ---
     const handleFileUpload = async (
         file: File,
         docType: 'clinic' | 'selfie'
@@ -130,7 +180,7 @@ export default function LogMeetingPage() {
         }
     };
 
-    // --- 6. Form submit handler ---
+    // --- 9. Form submit handler ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -189,6 +239,11 @@ export default function LogMeetingPage() {
             handleFileRemove('clinic');
             handleFileRemove('selfie');
             
+            // --- NEW: Reset doctor lookup state ---
+            setIsDoctorFound(false);
+            setDoctorError('');
+            // --- END NEW ---
+            
             setTimeout(() => setSuccess(''), 5000);
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
@@ -200,7 +255,7 @@ export default function LogMeetingPage() {
         setLoading(false);
     };
 
-    // --- 7. NEW: Enhanced JSX ---
+    // --- 10. JSX ---
     const inputStyles = "w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
     const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
     const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
@@ -279,7 +334,7 @@ export default function LogMeetingPage() {
                     {/* Form */}
                     <form onSubmit={handleSubmit} className="p-6 space-y-6">
                         
-                        {/* Section 1: Doctor Information */}
+                        {/* Section 1: Doctor Information --- MODIFIED --- */}
                         <div className="space-y-4">
                             <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
                                 <svg className="w-5 h-5 mr-2 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
@@ -287,19 +342,52 @@ export default function LogMeetingPage() {
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2">
-                                    <label className={labelStyles}>Doctor's Name <span className="text-red-400">*</span></label>
-                                    <input type="text" name="doctor_name" value={formData.doctor_name} onChange={handleChange} className={inputStyles} placeholder="Enter doctor's full name" required />
-                                </div>
-                                <div>
                                     <label className={labelStyles}>Doctor's Phone <span className="text-red-400">*</span></label>
-                                    <input type="tel" name="doctor_phone_number" value={formData.doctor_phone_number} onChange={handleChange} maxLength={10} className={inputStyles} placeholder="10-digit phone" required />
+                                    <input 
+                                        type="tel" 
+                                        name="doctor_phone_number" 
+                                        value={formData.doctor_phone_number} 
+                                        onChange={handleChange} 
+                                        onBlur={fetchDoctorDetails} // <-- Triggers lookup
+                                        maxLength={10} 
+                                        className={inputStyles} 
+                                        placeholder="10-digit phone (will auto-fill name)" 
+                                        required 
+                                        disabled={loading}
+                                    />
+                                    {isFetchingDoctor && <p className="text-xs text-yellow-400 mt-1">Searching for doctor...</p>}
+                                    {doctorError && <p className="text-xs text-red-400 mt-1">{doctorError}</p>}
+                                </div>
+
+                                <div>
+                                    <label className={labelStyles}>Doctor's Name <span className="text-red-400">*</span></label>
+                                    <input 
+                                        type="text" 
+                                        name="doctor_name" 
+                                        value={formData.doctor_name} 
+                                        onChange={handleChange} 
+                                        className={inputStyles} 
+                                        placeholder={isDoctorFound ? "Auto-filled" : "Enter doctor's full name"} 
+                                        required 
+                                        disabled={isDoctorFound || loading} // <-- Lock if found
+                                    />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Locality</label>
-                                    <input type="text" name="locality" value={formData.locality} onChange={handleChange} className={inputStyles} placeholder="Enter clinic area or locality" />
+                                    <input 
+                                        type="text" 
+                                        name="locality" 
+                                        value={formData.locality} 
+                                        onChange={handleChange} 
+                                        className={inputStyles} 
+                                        placeholder={isDoctorFound ? "Auto-filled" : "Enter clinic area or locality"} 
+                                        disabled={isDoctorFound || loading} // <-- Lock if found
+                                    />
                                 </div>
                             </div>
                         </div>
+                        {/* --- END MODIFICATION --- */}
+
 
                         {/* Section 2: Meeting Details */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
@@ -310,19 +398,19 @@ export default function LogMeetingPage() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className={labelStyles}>Date of Meeting</label>
-                                    <input type="date" name="timestamp_of_the_meeting" value={formData.timestamp_of_the_meeting} onChange={handleChange} max={getTodayDate()} className={inputStyles} />
+                                    <input type="date" name="timestamp_of_the_meeting" value={formData.timestamp_of_the_meeting} onChange={handleChange} max={getTodayDate()} className={inputStyles} disabled={loading} />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Duration (minutes)</label>
-                                    <input type="number" name="duration_of_meeting" value={formData.duration_of_meeting} onChange={handleChange} min="1" className={inputStyles} />
+                                    <input type="number" name="duration_of_meeting" value={formData.duration_of_meeting} onChange={handleChange} min="1" className={inputStyles} disabled={loading} />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Avg. OPD Count (Daily)</label>
-                                    <input type="number" name="opd_count" value={formData.opd_count} onChange={handleChange} min="0" className={inputStyles} placeholder="e.g., 25" />
+                                    <input type="number" name="opd_count" value={formData.opd_count} onChange={handleChange} min="0" className={inputStyles} placeholder="e.g., 25" disabled={loading} />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Patients During Meeting</label>
-                                    <input type="number" name="numPatientsDuringMeeting" value={formData.numPatientsDuringMeeting} onChange={handleChange} min="0" className={inputStyles} />
+                                    <input type="number" name="numPatientsDuringMeeting" value={formData.numPatientsDuringMeeting} onChange={handleChange} min="0" className={inputStyles} disabled={loading} />
                                 </div>
                                 
                                 <div className="md:col-span-2">
@@ -337,6 +425,7 @@ export default function LogMeetingPage() {
                                                     checked={formData.facilities.includes(facility)} 
                                                     onChange={handleCheckboxChange}
                                                     className="rounded text-blue-500 bg-gray-800 border-gray-600 focus:ring-blue-500"
+                                                    disabled={loading}
                                                 />
                                                 <span>{facility}</span>
                                             </label>
@@ -355,15 +444,15 @@ export default function LogMeetingPage() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2">
                                     <label className={labelStyles}>Doctor's Queries</label>
-                                    <textarea name="queries_by_the_doctor" value={formData.queries_by_the_doctor} onChange={handleChange} rows={3} className={inputStyles} placeholder="What did the doctor ask or discuss?" />
+                                    <textarea name="queries_by_the_doctor" value={formData.queries_by_the_doctor} onChange={handleChange} rows={3} className={inputStyles} placeholder="What did the doctor ask or discuss?" disabled={loading} />
                                 </div>
                                 <div className="md:col-span-2">
                                     <label className={labelStyles}>Your Comments/Notes</label>
-                                    <textarea name="comments_by_ndm" value={formData.comments_by_ndm} onChange={handleChange} rows={3} className={inputStyles} placeholder="Additional comments or observations" />
+                                    <textarea name="comments_by_ndm" value={formData.comments_by_ndm} onChange={handleChange} rows={3} className={inputStyles} placeholder="Additional comments or observations" disabled={loading} />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Rating (1-5)</label>
-                                    <select name="rating" value={formData.rating} onChange={handleChange} className={selectStyles}>
+                                    <select name="rating" value={formData.rating} onChange={handleChange} className={selectStyles} disabled={loading}>
                                         <option value="1">1 - Very Poor</option>
                                         <option value="2">2 - Poor</option>
                                         <option value="3">3 - Average</option>
@@ -373,7 +462,7 @@ export default function LogMeetingPage() {
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Chances of Getting Leads</label>
-                                    <select name="chances_of_getting_leads" value={formData.chances_of_getting_leads} onChange={handleChange} className={selectStyles}>
+                                    <select name="chances_of_getting_leads" value={formData.chances_of_getting_leads} onChange={handleChange} className={selectStyles} disabled={loading}>
                                         <option value="high">High</option>
                                         <option value="medium">Medium</option>
                                         <option value="low">Low</option>
