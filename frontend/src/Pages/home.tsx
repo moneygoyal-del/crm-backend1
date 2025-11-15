@@ -11,7 +11,7 @@ function Home() {
   };
 
   return (
-    <div className="h-full w-full bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+    <div className="min-h-screen w-full bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex flex-col">
       {/* Header (No changes here) */}
       <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -40,7 +40,7 @@ function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 flex-grow">
         {/* Welcome Section (No changes here) */}
         <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/30 rounded-2xl p-6 sm:p-8 mb-8">
           <div className="flex items-center space-x-4">
@@ -189,7 +189,7 @@ function Home() {
       </main>
 
       {/* Footer (No changes here) */}
-      <footer className="bg-gray-800/30 border-t border-gray-700 mt-12">
+      <footer className="bg-gray-800/30 border-t border-gray-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-sm text-gray-400">
           <p>© 2025 Medpho Healthcare. All rights reserved.</p>
         </div>
