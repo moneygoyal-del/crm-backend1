@@ -38,7 +38,7 @@ export default function BookOpdPage() {
   });
 
   // --- 3. State for UI and errors ---
-  const [loading, setLoading] = useState(false); // This now controls the ENTIRE submit process
+  const [loading, setLoading] = useState(false); // Controls the ENTIRE submit process
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -46,7 +46,7 @@ export default function BookOpdPage() {
   const [isFetchingDoctor, setIsFetchingDoctor] = useState(false);
   const [doctorError, setDoctorError] = useState("");
 
-  // --- 5. NEW: State for file objects (replacing URL/uploading states) ---
+  // --- 5. State for file objects ---
   const [aadharFile, setAadharFile] = useState<File | null>(null);
   const [pmjayFile, setPmjayFile] = useState<File | null>(null);
 
@@ -113,7 +113,7 @@ export default function BookOpdPage() {
     });
   };
 
-  // --- 9. NEW: File change handler (just saves file to state) ---
+  // --- 9. File change handler (just saves file to state) ---
   const handleFileChange = (
     e: React.ChangeEvent<HTMLInputElement>,
     docType: 'aadhar' | 'pmjay'
@@ -167,140 +167,130 @@ export default function BookOpdPage() {
     }
   };
   
-  // --- 12. NEW: Helper function to upload a file (to be called by handleSubmit) ---
-  const uploadFileToDrive = async (file: File): Promise<string> => {
-    const fileFormData = new FormData();
-    fileFormData.append('document', file);
+  // --- 12. REMOVED uploadFileToDrive helper function ---
 
-    try {
-      const res = await api.post('/patientLeads/upload-document', fileFormData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      return res.data.data.url; // Return the Google Drive URL
-    } catch (err) {
-      console.error("File upload failed:", err);
-      // Re-throw a specific error to be caught by handleSubmit
-      throw new Error(`Failed to upload ${file.name}. Please try again.`);
+// --- 13. Form submit handler (MODIFIED to use FormData) ---
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setError("");
+  setSuccess("");
+
+  // --- Basic field validation ---
+  if (
+    !formData.patient_name ||
+    !formData.patient_phone ||
+    !formData.refree_phone_no ||
+    !formData.hospital_name ||
+    !formData.medical_condition ||
+    !formData.appointment_date ||
+    !formData.appointment_time ||
+    !formData.city
+  ) {
+    setError("Please fill in all required (*) fields.");
+    return;
+  }
+
+  // --- MANDATORY AADHAR CHECK ---
+  if (!aadharFile) {
+    setError("Aadhar Card Photo is a mandatory field.");
+    return;
+  }
+
+  // --- Start loading ---
+  setLoading(true);
+
+  try {
+    // --- 1. Create FormData and append all data ---
+    const submissionFormData = new FormData();
+    
+    // Append all text data
+    Object.keys(formData).forEach(key => {
+      // --- THIS IS THE FIX ---
+      // We cast the key to keyof typeof formData
+      const typedKey = key as keyof typeof formData;
+      submissionFormData.append(key, formData[typedKey]);
+      // --- END OF FIX ---
+    });
+    
+    // Append files
+    if (aadharFile) { // Check if aadharFile is not null before appending
+      submissionFormData.append('aadhar_document', aadharFile); // Use the key name from backend route
     }
-  };
-
-  // --- 13. Form submit handler (HEAVILY MODIFIED) ---
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
-
-    // --- Basic field validation ---
-    if (
-      !formData.patient_name ||
-      !formData.patient_phone ||
-      !formData.refree_phone_no ||
-      !formData.hospital_name ||
-      !formData.medical_condition ||
-      !formData.appointment_date ||
-      !formData.appointment_time ||
-      !formData.city
-    ) {
-      setError("Please fill in all required (*) fields.");
-      return;
+    if (pmjayFile) {
+      submissionFormData.append('pmjay_document', pmjayFile); // Use the key name from backend route
     }
 
-    // --- MANDATORY AADHAR CHECK ---
-    if (!aadharFile) {
-      setError("Aadhar Card Photo is a mandatory field.");
-      return;
-    }
-
-    // --- Start loading ---
-    setLoading(true);
-
-    try {
-      // --- 1. Upload files FIRST ---
-      let aadharDriveUrl: string | null = null;
-      let pmjayDriveUrl: string | null = null;
-
-      // Upload Aadhar (mandatory)
-      // This will throw an error if it fails, which the catch block will handle
-      aadharDriveUrl = await uploadFileToDrive(aadharFile);
-      
-      // Upload PMJAY (optional)
-      if (pmjayFile) {
-        pmjayDriveUrl = await uploadFileToDrive(pmjayFile);
+    // --- 2. Submit main form (text + files) in ONE request ---
+    const res = await api.post(
+      "/patientLeads/create-web", 
+      submissionFormData, 
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       }
-      
-      // --- 2. Prepare main form payload ---
-      const payload = {
-        ...formData,
-        age: formData.age || "N/A",
-        aadhar_card_url: aadharDriveUrl, // Use the new URL
-        pmjay_card_url: pmjayDriveUrl,  // Use the new URL (or null)
-      };
+    );
+    
+    setSuccess(
+      `✅ Booking ${res.data.data.booking_reference} created successfully.`
+    );
 
-      // --- 3. Submit main form ---
-      const res = await api.post("/patientLeads/create-web", payload);
-      setSuccess(
-        `✅ Booking ${res.data.data.booking_reference} created successfully.`
-      );
+    setTimeout(() => setSuccess(""), 5000);
 
-      setTimeout(() => setSuccess(""), 5000);
+    // --- 3. Reset entire form ---
+    setFormData({
+      booking_reference: generateLeadId(),
+      patient_name: "",
+      patient_phone: "",
+      referee_name: "",
+      refree_phone_no: "",
+      hospital_name: "",
+      medical_condition: "",
+      city: "",
+      age: "",
+      gender: "",
+      panel: "",
+      appointment_date: getTodayDate(),
+      appointment_time: getCurrentTime(),
+      current_disposition: "opd_booked",
+    });
+    setHospitals([]);
+    
+    // Reset file state
+    setAadharFile(null);
+    setPmjayFile(null);
 
-      // --- 4. Reset entire form ---
-      setFormData({
-        booking_reference: generateLeadId(),
-        patient_name: "",
-        patient_phone: "",
-        referee_name: "",
-        refree_phone_no: "",
-        hospital_name: "",
-        medical_condition: "",
-        city: "",
-        age: "",
-        gender: "",
-        panel: "",
-        appointment_date: getTodayDate(),
-        appointment_time: getCurrentTime(),
-        current_disposition: "opd_booked",
-      });
-      setHospitals([]);
-      
-      // Reset file state
-      setAadharFile(null);
-      setPmjayFile(null);
-
-      // Reset file input elements
-      const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
-      if (aadharInput) aadharInput.value = "";
-      const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
-      if (pmjayInput) pmjayInput.value = "";
-      
-    } catch (err: unknown) {
-      // Handle errors from *either* upload *or* form submission
-      if (axios.isAxiosError(err)) {
-        if (err.response?.data?.message?.includes("duplicate key")) {
-          setError(
-            "A booking with this ID already exists. Please submit again."
-          );
-          setFormData((prev) => ({
-            ...prev,
-            booking_reference: generateLeadId(),
-          }));
-        } else {
-          setError(err.response?.data?.message || "An error occurred.");
-        }
-      } else if (err instanceof Error) {
-          // This will catch the "Failed to upload..." error from our helper
-          setError(err.message);
+    // Reset file input elements
+    const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
+    if (aadharInput) aadharInput.value = "";
+    const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
+    if (pmjayInput) pmjayInput.value = "";
+    
+  } catch (err: unknown) {
+    // Handle errors from the form submission
+    if (axios.isAxiosError(err)) {
+      if (err.response?.data?.message?.includes("duplicate key")) {
+        setError(
+          "A booking with this ID already exists. Please submit again."
+        );
+        setFormData((prev) => ({
+          ...prev,
+          booking_reference: generateLeadId(),
+        }));
       } else {
-        console.error("Non-Axios error during submit:", err);
-        setError("Unexpected error occurred.");
+        setError(err.response?.data?.message || "An error occurred.");
       }
-    } finally {
-      // --- Stop loading ---
-      setLoading(false);
+    } else {
+      console.error("Non-Axios error during submit:", err);
+      setError("Unexpected error occurred.");
     }
-  };
+  } finally {
+    // --- Stop loading ---
+    setLoading(false);
+  }
+};
 
-  // --- 14. JSX (UPDATED) ---
+  // --- 14. JSX (No changes needed from previous step) ---
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       {/* Header */}
