@@ -35,4 +35,6 @@ router.route("/upload-meeting-photo").post(
     DoctorController.uploadMeetingPhoto
 );
 
+router.route("/get-by-phone/:phone").get(verifyJWT, DoctorController.getDoctorByPhone);
+
 export default router;

@@ -38,19 +38,21 @@ export default function BookOpdPage() {
   });
 
   // --- 3. State for UI and errors ---
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // This now controls the ENTIRE submit process
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // --- 4. State for file uploads ---
-  const [aadharUrl, setAadharUrl] = useState<string | null>(null);
-  const [pmjayUrl, setPmjayUrl] = useState<string | null>(null);
-  const [isUploadingAadhar, setIsUploadingAadhar] = useState(false);
-  const [isUploadingPmjay, setIsUploadingPmjay] = useState(false);
+  // --- 4. State for doctor name lookup ---
+  const [isFetchingDoctor, setIsFetchingDoctor] = useState(false);
+  const [doctorError, setDoctorError] = useState("");
+
+  // --- 5. NEW: State for file objects (replacing URL/uploading states) ---
+  const [aadharFile, setAadharFile] = useState<File | null>(null);
+  const [pmjayFile, setPmjayFile] = useState<File | null>(null);
 
   const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
-  // --- 5. Memos and Effects for date/time logic ---
+  // --- 6. Memos and Effects for date/time logic ---
   const minTime = useMemo(() => {
     const today = getTodayDate();
     return formData.appointment_date === today ? getCurrentTime() : "00:00";
@@ -65,7 +67,7 @@ export default function BookOpdPage() {
     }
   }, [formData.appointment_date, formData.appointment_time]);
 
-  // --- 6. Effects for fetching cities and hospitals ---
+  // --- 7. Effects for fetching cities and hospitals ---
   useEffect(() => {
     const fetchCities = async () => {
       try {
@@ -97,7 +99,7 @@ export default function BookOpdPage() {
     fetchHospitals();
   }, [formData.city]);
 
-  // --- 7. Form field change handler ---
+  // --- 8. Form field change handler ---
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
@@ -111,62 +113,84 @@ export default function BookOpdPage() {
     });
   };
 
-  // --- 8. File upload handler ---
-  const handleFileUpload = async (
-    file: File,
+  // --- 9. NEW: File change handler (just saves file to state) ---
+  const handleFileChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
     docType: 'aadhar' | 'pmjay'
   ) => {
-    if (!file) return;
+    const file = e.target.files ? e.target.files[0] : null;
+    if (docType === 'aadhar') {
+      setAadharFile(file);
+    }
+    if (docType === 'pmjay') {
+      setPmjayFile(file);
+    }
+  };
+  
+  // --- 10. File remove handler ---
+  const handleFileRemove = (docType: 'aadhar' | 'pmjay') => {
+    if (docType === 'aadhar') {
+      setAadharFile(null);
+      const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
+      if (aadharInput) aadharInput.value = "";
+    }
+    if (docType === 'pmjay') {
+      setPmjayFile(null);
+      const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
+      if (pmjayInput) pmjayInput.value = "";
+    }
+  };
 
-    if (docType === 'aadhar') setIsUploadingAadhar(true);
-    if (docType === 'pmjay') setIsUploadingPmjay(true);
-    setError('');
+  // --- 11. Function to fetch doctor name by phone ---
+  const fetchDoctorName = async () => {
+    const phone = formData.refree_phone_no;
+    
+    if (phone.length !== 10) {
+      setDoctorError("");
+      setFormData((prev) => ({ ...prev, referee_name: "" }));
+      return;
+    }
 
+    setIsFetchingDoctor(true);
+    setDoctorError("");
+
+    try {
+      const res = await api.get(`/doctors/get-by-phone/${phone}`);
+      const doctorName = res.data.data.name;
+      setFormData((prev) => ({ ...prev, referee_name: doctorName }));
+    } catch (err) {
+      console.error("Failed to fetch doctor:", err);
+      setDoctorError("Doctor not found.");
+      setFormData((prev) => ({ ...prev, referee_name: "" }));
+    } finally {
+      setIsFetchingDoctor(false);
+    }
+  };
+  
+  // --- 12. NEW: Helper function to upload a file (to be called by handleSubmit) ---
+  const uploadFileToDrive = async (file: File): Promise<string> => {
     const fileFormData = new FormData();
     fileFormData.append('document', file);
 
     try {
       const res = await api.post('/patientLeads/upload-document', fileFormData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-
-      const driveUrl = res.data.data.url;
-      if (docType === 'aadhar') setAadharUrl(driveUrl);
-      if (docType === 'pmjay') setPmjayUrl(driveUrl);
-
+      return res.data.data.url; // Return the Google Drive URL
     } catch (err) {
       console.error("File upload failed:", err);
-      setError(`Failed to upload ${docType} image. Please try again.`);
-    } finally {
-      if (docType === 'aadhar') setIsUploadingAadhar(false);
-      if (docType === 'pmjay') setIsUploadingPmjay(false);
+      // Re-throw a specific error to be caught by handleSubmit
+      throw new Error(`Failed to upload ${file.name}. Please try again.`);
     }
   };
 
-  // --- 9. NEW: File remove handler ---
-  const handleFileRemove = (docType: 'aadhar' | 'pmjay') => {
-    if (docType === 'aadhar') {
-      setAadharUrl(null);
-      const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
-      if (aadharInput) aadharInput.value = "";
-    }
-    if (docType === 'pmjay') {
-      setPmjayUrl(null);
-      const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
-      if (pmjayInput) pmjayInput.value = "";
-    }
-  };
-  // --- END NEW FUNCTION ---
-
-  // --- 10. Form submit handler (UPDATED) ---
+  // --- 13. Form submit handler (HEAVILY MODIFIED) ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccess("");
-    setLoading(true);
 
+    // --- Basic field validation ---
     if (
       !formData.patient_name ||
       !formData.patient_phone ||
@@ -178,18 +202,41 @@ export default function BookOpdPage() {
       !formData.city
     ) {
       setError("Please fill in all required (*) fields.");
-      setLoading(false);
       return;
     }
 
-    const payload = {
-      ...formData,
-      age: formData.age || "N/A",
-      aadhar_card_url: aadharUrl,
-      pmjay_card_url: pmjayUrl,
-    };
+    // --- MANDATORY AADHAR CHECK ---
+    if (!aadharFile) {
+      setError("Aadhar Card Photo is a mandatory field.");
+      return;
+    }
+
+    // --- Start loading ---
+    setLoading(true);
 
     try {
+      // --- 1. Upload files FIRST ---
+      let aadharDriveUrl: string | null = null;
+      let pmjayDriveUrl: string | null = null;
+
+      // Upload Aadhar (mandatory)
+      // This will throw an error if it fails, which the catch block will handle
+      aadharDriveUrl = await uploadFileToDrive(aadharFile);
+      
+      // Upload PMJAY (optional)
+      if (pmjayFile) {
+        pmjayDriveUrl = await uploadFileToDrive(pmjayFile);
+      }
+      
+      // --- 2. Prepare main form payload ---
+      const payload = {
+        ...formData,
+        age: formData.age || "N/A",
+        aadhar_card_url: aadharDriveUrl, // Use the new URL
+        pmjay_card_url: pmjayDriveUrl,  // Use the new URL (or null)
+      };
+
+      // --- 3. Submit main form ---
       const res = await api.post("/patientLeads/create-web", payload);
       setSuccess(
         `✅ Booking ${res.data.data.booking_reference} created successfully.`
@@ -197,6 +244,7 @@ export default function BookOpdPage() {
 
       setTimeout(() => setSuccess(""), 5000);
 
+      // --- 4. Reset entire form ---
       setFormData({
         booking_reference: generateLeadId(),
         patient_name: "",
@@ -215,25 +263,18 @@ export default function BookOpdPage() {
       });
       setHospitals([]);
       
-      setAadharUrl(null);
-      setPmjayUrl(null);
-      // --- FIX IS HERE ---
-      // 1. Get the element
+      // Reset file state
+      setAadharFile(null);
+      setPmjayFile(null);
+
+      // Reset file input elements
       const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
-      // 2. Check if it exists before setting value
-      if (aadharInput) {
-        aadharInput.value = "";
-      }
-      
-      // 1. Get the element
+      if (aadharInput) aadharInput.value = "";
       const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
-      // 2. Check if it exists before setting value
-      if (pmjayInput) {
-        pmjayInput.value = "";
-      }
-      // --- END FIX ---
+      if (pmjayInput) pmjayInput.value = "";
       
     } catch (err: unknown) {
+      // Handle errors from *either* upload *or* form submission
       if (axios.isAxiosError(err)) {
         if (err.response?.data?.message?.includes("duplicate key")) {
           setError(
@@ -246,16 +287,20 @@ export default function BookOpdPage() {
         } else {
           setError(err.response?.data?.message || "An error occurred.");
         }
+      } else if (err instanceof Error) {
+          // This will catch the "Failed to upload..." error from our helper
+          setError(err.message);
       } else {
         console.error("Non-Axios error during submit:", err);
         setError("Unexpected error occurred.");
       }
     } finally {
+      // --- Stop loading ---
       setLoading(false);
     }
   };
 
-  // --- 11. JSX (UPDATED) ---
+  // --- 14. JSX (UPDATED) ---
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       {/* Header */}
@@ -406,6 +451,7 @@ export default function BookOpdPage() {
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     placeholder="Enter patient name"
                     required
+                    disabled={loading}
                   />
                 </div>
 
@@ -422,6 +468,7 @@ export default function BookOpdPage() {
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     placeholder="10-digit phone"
                     required
+                    disabled={loading}
                   />
                 </div>
 
@@ -436,6 +483,7 @@ export default function BookOpdPage() {
                     onChange={handleChange}
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     placeholder="Enter age"
+                    disabled={loading}
                   />
                 </div>
 
@@ -448,6 +496,7 @@ export default function BookOpdPage() {
                     value={formData.gender}
                     onChange={handleChange}
                     className="w-full px-2 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    disabled={loading}
                   >
                     <option value="">Select gender</option>
                     <option value="male">Male</option>
@@ -456,36 +505,33 @@ export default function BookOpdPage() {
                   </select>
                 </div>
 
-                {/* --- UPDATED FILE INPUTS --- */}
+                {/* --- UPDATED AADHAR INPUT --- */}
                 <div className="md:col-span-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Aadhar Card Photo
+                    Aadhar Card Photo <span className="text-red-400">*</span>
                   </label>
                   
-                  {/* Show input if NOT uploaded and NOT uploading */}
-                  {!aadharUrl && !isUploadingAadhar && (
+                  {!aadharFile && (
                     <input
                       id="aadhar-upload"
                       type="file"
                       accept="image/*"
                       capture="environment"
-                      onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'aadhar')}
-                      disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                      onChange={(e) => handleFileChange(e, 'aadhar')}
+                      disabled={loading}
                       className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50"
                     />
                   )}
                   
-                  {/* Show loading text */}
-                  {isUploadingAadhar && <p className="text-xs text-yellow-400 mt-1">Uploading...</p>}
-                  
-                  {/* Show success + remove button */}
-                  {aadharUrl && !isUploadingAadhar && (
+                  {aadharFile && (
                     <div className="flex items-center justify-between p-2 bg-gray-700 rounded-lg">
-                      <p className="text-sm text-green-400">Aadhar Uploaded ✓</p>
+                      <p className="text-sm text-green-400 truncate w-4/5" title={aadharFile.name}>
+                        {aadharFile.name}
+                      </p>
                       <button
                         type="button"
                         onClick={() => handleFileRemove('aadhar')}
-                        disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                        disabled={loading}
                         className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
                       >
                         Remove
@@ -494,35 +540,33 @@ export default function BookOpdPage() {
                   )}
                 </div>
 
+                {/* --- UPDATED PMJAY INPUT --- */}
                 <div className="md:col-span-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     PMJAY Card Photo
                   </label>
                   
-                  {/* Show input if NOT uploaded and NOT uploading */}
-                  {!pmjayUrl && !isUploadingPmjay && (
+                  {!pmjayFile && (
                     <input
                       id="pmjay-upload"
                       type="file"
                       accept="image/*"
                       capture="environment"
-                      onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'pmjay')}
-                      disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                      onChange={(e) => handleFileChange(e, 'pmjay')}
+                      disabled={loading}
                       className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50"
                     />
                   )}
                   
-                  {/* Show loading text */}
-                  {isUploadingPmjay && <p className="text-xs text-yellow-400 mt-1">Uploading...</p>}
-                  
-                  {/* Show success + remove button */}
-                  {pmjayUrl && !isUploadingPmjay && (
+                  {pmjayFile && (
                     <div className="flex items-center justify-between p-2 bg-gray-700 rounded-lg">
-                      <p className="text-sm text-green-400">PMJAY Uploaded ✓</p>
+                      <p className="text-sm text-green-400 truncate w-4/5" title={pmjayFile.name}>
+                        {pmjayFile.name}
+                      </p>
                       <button
                         type="button"
                         onClick={() => handleFileRemove('pmjay')}
-                        disabled={isUploadingAadhar || isUploadingPmjay || loading}
+                        disabled={loading}
                         className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
                       >
                         Remove
@@ -565,6 +609,7 @@ export default function BookOpdPage() {
                     onChange={handleChange}
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     required
+                    disabled={loading}
                   >
                     <option value="">Select city...</option>
                     {cities.map((city) => (
@@ -584,7 +629,7 @@ export default function BookOpdPage() {
                     value={formData.hospital_name}
                     onChange={handleChange}
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                    disabled={!formData.city || isHospitalLoading}
+                    disabled={!formData.city || isHospitalLoading || loading}
                     required
                   >
                     <option value="">
@@ -602,19 +647,7 @@ export default function BookOpdPage() {
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Referee Name
-                  </label>
-                  <input
-                    type="text"
-                    name="referee_name"
-                    value={formData.referee_name}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                    placeholder="Doctor name (for sheet)"
-                  />
-                </div>
+                {/* --- MODIFIED FIELDS FOR DOCTOR LOOKUP --- */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Referee Doctor's Phone{" "}
@@ -629,8 +662,30 @@ export default function BookOpdPage() {
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     placeholder="10-digit phone"
                     required
+                    onBlur={fetchDoctorName}
+                    disabled={loading}
+                  />
+                  {isFetchingDoctor && <p className="text-xs text-yellow-400 mt-1">Searching for doctor...</p>}
+                  {doctorError && <p className="text-xs text-red-400 mt-1">{doctorError}</p>}
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Referee Name
+                  </label>
+                  <input
+                    type="text"
+                    name="referee_name"
+                    value={formData.referee_name}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    placeholder="Auto-filled from phone"
+                    readOnly
+                    disabled={loading}
                   />
                 </div>
+                {/* --- END MODIFIED FIELDS --- */}
+
 
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -644,6 +699,7 @@ export default function BookOpdPage() {
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     placeholder="Describe the medical condition"
                     required
+                    disabled={loading}
                   />
                 </div>
                 <div className="md:col-span-2">
@@ -655,6 +711,7 @@ export default function BookOpdPage() {
                     value={formData.panel}
                     onChange={handleChange}
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    disabled={loading}
                   >
                     <option value="">Select payment mode</option>
                     <option value="Cash">Cash</option>
@@ -696,6 +753,7 @@ export default function BookOpdPage() {
                     min={getTodayDate()}
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     required
+                    disabled={loading}
                   />
                 </div>
 
@@ -711,6 +769,7 @@ export default function BookOpdPage() {
                     min={minTime}
                     className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     required
+                    disabled={loading}
                   />
                 </div>
               </div>
@@ -720,7 +779,7 @@ export default function BookOpdPage() {
             <div className="pt-6">
               <button
                 type="submit"
-                disabled={loading || isUploadingAadhar || isUploadingPmjay}
+                disabled={loading}
                 className="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               >
                 {loading ? (

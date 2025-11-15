@@ -1009,4 +1009,33 @@ export default class doctorController {
         }
     });
 
+
+    getDoctorByPhone = asyncHandler(async (req, res, next) => {
+        const { phone } = req.params;
+        if (!phone) {
+            throw new apiError(400, "Phone number is required");
+        }
+
+        const phone_processed = process_phone_no(phone);
+
+        const result = await pool.query(
+            "SELECT first_name, last_name FROM doctors WHERE phone = $1",
+            [phone_processed]
+        );
+
+        if (result.rows.length === 0) {
+            throw new apiError(404, "Doctor not found with this phone number");
+        }
+
+        const doctor = result.rows[0];
+        const fullName = `${doctor.first_name} ${doctor.last_name || ''}`.trim();
+
+        res.status(200).json(new apiResponse(
+            200, 
+            { name: fullName }, 
+            "Doctor name fetched successfully"
+        ));
+    });
+    
+
 }
