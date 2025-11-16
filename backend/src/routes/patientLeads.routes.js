@@ -7,10 +7,10 @@ const router = Router();
 
 const PatientLeadController = new patientLeadController(); 
 
-router.route("/create").post(PatientLeadController.createPatientLead);
+router.route("/create").post(verifyJWT,PatientLeadController.createPatientLead);
 router.route("/createBatchOPD").post(upload.single('leads'),PatientLeadController.createPatientLeadBatchUpload);
 router.route("/createBatchDispositionLogs").post(upload.single('dispositions'),PatientLeadController.createDispositionLogBatchUpload); 
-router.route("/delete").delete(PatientLeadController.deletePatientLead);
+router.route("/delete").delete(verifyJWT,PatientLeadController.deletePatientLead);
 router.route("/get-phone/:booking_reference").get(verifyJWT, PatientLeadController.getPatientPhoneByRef);
 router.route("/update").put(verifyJWT,PatientLeadController.updatePatientLead);
 

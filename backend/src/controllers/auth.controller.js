@@ -147,7 +147,7 @@ export default class authController {
 
         // 6. Sign the JWT with your 3-DAY expiry
         const token = jwt.sign(payload, process.env.JWT_SECRET, {
-            expiresIn: process.env.JWT_EXPIRE_IN || '1m'
+            expiresIn: process.env.JWT_EXPIRE_IN || '5d'
         });
 
         // 7. Send back the token and user info

@@ -7,21 +7,21 @@ const router = Router();
 const DoctorController = new doctorController();
 
 // CREATE: Single doctor creation with meeting
-router.route("/createByNdmName").post(DoctorController.createDoctorByName);
+router.route("/createByNdmName").post(verifyJWT,DoctorController.createDoctorByName);
 
 // CREATE: Batch upload routes
 router.route("/createBatchDoctorsandMeetings").post(upload.single('doctors'), DoctorController.createDoctorBatchAndMeetings);
-router.route("/createOnlineDoctors/:ndmPhone").post(upload.single('doctors'), DoctorController.createOnlineDoctors);
+router.route("/createOnlineDoctors/:ndmPhone").post(verifyJWT,upload.single('doctors'), DoctorController.createOnlineDoctors);
 
 // UPDATE: Single doctor update
-router.route("/update").put(DoctorController.updateDoctor);
+router.route("/update").put(verifyJWT,DoctorController.updateDoctor);
 
 // DELETE: Single doctor deletion
-router.route("/delete").delete(DoctorController.deleteDoctor);
+router.route("/delete").delete(verifyJWT,DoctorController.deleteDoctor);
 
 
 //DELETE: Delete a meeting by id
-router.route("/deleteMeeting").delete(DoctorController.deleteDoctorMeeting);
+router.route("/deleteMeeting").delete(verifyJWT,DoctorController.deleteDoctorMeeting);
 // router.route("update").put();
 
 router.route("/createBatchCallLogs").post(upload.single('calllogs'), DoctorController.createDoctorCallLogBatch);
