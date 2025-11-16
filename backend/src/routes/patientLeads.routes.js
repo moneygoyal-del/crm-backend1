@@ -14,8 +14,15 @@ router.route("/delete").delete(PatientLeadController.deletePatientLead);
 router.route("/get-phone/:booking_reference").get(verifyJWT, PatientLeadController.getPatientPhoneByRef);
 router.route("/update").put(verifyJWT,PatientLeadController.updatePatientLead);
 
-router.route("/create-web").post(verifyJWT, PatientLeadController.createOpdBookingFromWeb);
-
+router.route("/create-web").post(
+    verifyJWT, 
+    // Use upload.fields to accept two specific file fields
+    upload.fields([
+        { name: 'aadhar_document', maxCount: 1 },
+        { name: 'pmjay_document', maxCount: 1 }
+    ]),
+    PatientLeadController.createOpdBookingFromWeb
+);
 router.route("/upload-document").post(
     verifyJWT,
     upload.single('document'), // 'document' is the name of the form field

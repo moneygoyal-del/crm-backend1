@@ -9,6 +9,7 @@ import { processDoctorName } from "../helper/process_doctor_name.helper.js";
 import { addToSheetQueue } from "../utils/sheetQueue.util.js"; // <-- USE THE QUEUE
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import { sendDoctorMeetingNotification } from "../utils/notification.util.js";
+import path from "path";
 
 export default class doctorController {
     // --- THIS IS YOUR ORIGINAL FUNCTION (UNCHANGED) ---
@@ -159,23 +160,22 @@ export default class doctorController {
     createMeetingFromWeb = asyncHandler(async (req, res, next) => {
         // 1. Get user from JWT
         const loggedInUser = req.user;
-        if (!loggedInUser || !loggedInUser.first_name) {
-            throw new apiError(401, "User not authenticated or name is missing");
+        if (!loggedInUser || !loggedInUser.first_name || !loggedInUser.id) {
+            throw new apiError(401, "User not authenticated or ID is missing");
         }
         
-        // 2. Destructure ALL fields from the new form
+        // 2. Destructure fields from req.body (files are in req.files)
         const {
             doctor_name, doctor_phone_number, locality, duration_of_meeting,
             queries_by_the_doctor, comments_by_ndm, chances_of_getting_leads,
             timestamp_of_the_meeting, // This is the "dd/mm/yyyy HH:MM:SS" string
             
             // --- NEW FIELDS ---
-            clinic_image_link,
-            selfie_image_link,
+            // clinic_image_link & selfie_image_link are GONE from req.body
             gps_location_of_the_clinic,
             latitude,
             longitude,
-            facilities, // This will be a comma-separated string from the GAS form
+            facilities,
             opd_count,
             numPatientsDuringMeeting,
             rating
@@ -186,26 +186,23 @@ export default class doctorController {
         if (!ndm_name || !doctor_phone_number) throw new apiError(400, "NDM name and doctor phone are compulsory");
         
         // 3. Process data
-        const timestamp = processTimeStamp(timestamp_of_the_meeting); // Converts "dd/mm/yyyy..." to ISO
+        // The timestamp_of_the_meeting string is now "dd/mm/yyyy HH:MM:SS"
+        const timestamp = processTimeStamp(timestamp_of_the_meeting); 
         const phone = process_phone_no(doctor_phone_number);
         if (!phone || !timestamp) throw new apiError(400, "Invalid phone or timestamp format");
 
         const { firstName, lastName } = processDoctorName(doctor_name);
         const fullName = `${firstName} ${lastName}`.trim();
 
-        // 4. Update Location and Photos JSON
+        // 4. Update Location JSON
         const locationJson = JSON.stringify({
             locality: locality,
             latitude: latitude,
             longitude: longitude
         });
         
-        const photosJSON = JSON.stringify({
-            clinicImage: clinic_image_link,
-            selfieImage: selfie_image_link
-        });
-
-        // ... (keep existing doctor lookup/update/insert logic as-is) ...
+        // Photos JSON is now NULL on creation
+        
         const existingDoctor = await pool.query("SELECT id, onboarding_date, last_meeting, assigned_agent_id_offline FROM doctors WHERE phone = $1", [phone]);
         let NDM = loggedInUser.id; 
 
@@ -217,7 +214,6 @@ export default class doctorController {
                 NDM = doc.assigned_agent_id_offline;
             }
             await pool.query(
-                // --- UPDATE Query: Add location and gps_location_link ---
                 `UPDATE doctors SET 
                     onboarding_date = $1, last_meeting = $2, location = $3, 
                     updated_at = $5, assigned_agent_id_offline = $6, gps_location_link = $7 
@@ -226,7 +222,6 @@ export default class doctorController {
             );
         } else {
             await pool.query(
-                // --- INSERT Query: Add location and gps_location_link ---
                 `INSERT INTO doctors (
                     first_name, phone, location, onboarding_date, 
                     last_meeting, assigned_agent_id_offline, gps_location_link
@@ -240,14 +235,14 @@ export default class doctorController {
             throw new apiError(500, "Error creating doctor.");
         }
         
-        // 5. Insert the new, detailed meeting record
+        // 5. Insert the meeting record with NULL for photos
         const meeting = await pool.query(
             `INSERT INTO doctor_meetings (
                 doctor_id, agent_id, meeting_type, duration, location, 
                 meeting_notes, gps_verified, meeting_summary, created_at, updated_at,
                 photos, gps_location_link 
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
-            RETURNING id, agent_id, doctor_id`,
+            RETURNING id, agent_id, doctor_id`, // Return the new meeting ID
             [
                 doctor.rows[0].id, NDM, "physical", duration_of_meeting,
                 locationJson, 
@@ -255,46 +250,81 @@ export default class doctorController {
                 true, // GPS is verified from the form
                 chances_of_getting_leads, 
                 timestamp, timestamp,
-                photosJSON, // Add photos
-                gps_location_of_the_clinic // Add GPS link
+                null, // <-- Set photos to NULL initially
+                gps_location_of_the_clinic
             ]
         );
-        
-        // ... (End of DB logic) ...
+
+        const newMeetingId = meeting.rows[0].id;
         
         // --- 6. RESPOND TO CLIENT (FAST) ---
         res.status(201).json(new apiResponse(201, { ...meeting.rows[0], doctor_name: fullName }, "Doctor and meeting successfully created"));
 
         // --- 7. RUN BACKGROUND TASKS SAFELY ---
         const runBackgroundTasks = async () => {
+            let clinicDriveUrl = null;
+            let selfieDriveUrl = null;
+
             try {
-                // --- Task A: Add to Google Sheet Queue (with all new fields) ---
+                // --- Task A: File Uploads ---
+                const clinicFile = req.files?.clinic_photo?.[0];
+                const selfieFile = req.files?.selfie_photo?.[0];
+
+                if (clinicFile) {
+                    try {
+                        const fileExt = path.extname(clinicFile.originalname) || '.jpg';
+                        const fileName = `${NDM}_${Date.now()}_clinic${fileExt}`;
+                        const links = await uploadAndGetLink(clinicFile.path, clinicFile.mimetype, fileName);
+                        clinicDriveUrl = links.directLink;
+                    } catch (uploadErr) {
+                        console.error(`Clinic photo upload failed for meeting ${newMeetingId}:`, uploadErr.message);
+                    } finally {
+                        await fs.unlink(clinicFile.path); // Always delete temp file
+                    }
+                }
+
+                if (selfieFile) {
+                    try {
+                        const fileExt = path.extname(selfieFile.originalname) || '.jpg';
+                        const fileName = `${NDM}_${Date.now()}_selfie${fileExt}`;
+                        const links = await uploadAndGetLink(selfieFile.path, selfieFile.mimetype, fileName);
+                        selfieDriveUrl = links.directLink;
+                    } catch (uploadErr) {
+                        console.error(`Selfie photo upload failed for meeting ${newMeetingId}:`, uploadErr.message);
+                    } finally {
+                        await fs.unlink(selfieFile.path); // Always delete temp file
+                    }
+                }
+
+                // --- Task B: Update Meeting with Photo URLs ---
+                if (clinicDriveUrl || selfieDriveUrl) {
+                    const photosJSON = JSON.stringify({
+                        clinicImage: clinicDriveUrl,
+                        selfieImage: selfieDriveUrl,
+                    });
+                    console.log(`Updating meeting ${newMeetingId} with photo URLs...`);
+                    await pool.query(
+                        `UPDATE doctor_meetings SET photos = $1 WHERE id = $2`,
+                        [photosJSON, newMeetingId]
+                    );
+                }
+
+                // --- Task C: Add to Google Sheet Queue ---
                 const [date_of_meeting, time_of_meeting] = timestamp_of_the_meeting.split(' ');
                 
-                // This array MUST match the column order in your Google Sheet "Responses"
                 const sheetRow = [
-                    ndm_name,                     // formData.nd_manager
-                    doctor_name,                  // formData.doctor
-                    doctor_phone_number,          // formData.doctor_phone
-                    locality,                     // formData.clinicLocality
-                    facilities,                   // formData.facilities
-                    opd_count,                    // formData.opd_count
-                    duration_of_meeting,          // formData.durationMeeting
-                    numPatientsDuringMeeting,     // formData.numPatientsDuringMeeting
-                    queries_by_the_doctor,        // formData.doctorQueries
-                    rating,                       // formData.rating
-                    comments_by_ndm,              // formData.comments
-                    chances_of_getting_leads,     // formData.leadChances
-                    clinic_image_link,            // clinicPhotoUrl
-                    selfie_image_link,            // selfieUrl
-                    gps_location_of_the_clinic,   // 'http://googleusercontent.com/maps...'
-                    date_of_meeting,              // formattedDate
-                    time_of_meeting,              // formattedTime
-                    timestamp                     // now (as ISO string)
+                    ndm_name, doctor_name, doctor_phone_number, locality,
+                    facilities, opd_count, duration_of_meeting, 
+                    numPatientsDuringMeeting, queries_by_the_doctor, rating,
+                    comments_by_ndm, chances_of_getting_leads,
+                    clinicDriveUrl || "N/A", // Use final URL
+                    selfieDriveUrl || "N/A", // Use final URL
+                    gps_location_of_the_clinic, date_of_meeting,
+                    time_of_meeting, timestamp
                 ];
                 await addToSheetQueue("DOCTOR_MEETING", sheetRow);
 
-                // --- Task B: Send WhatsApp Notification ---
+                // --- Task D: Send WhatsApp Notification ---
                 await sendDoctorMeetingNotification(
                     doctor_name,
                     ndm_name,
@@ -304,7 +334,6 @@ export default class doctorController {
             } catch (backgroundError) {
                 console.error("--- BACKGROUND TASK FAILED (Doctor Meeting) ---");
                 console.error(backgroundError.message);
-                console.error("--- This did not stop the user's request. ---");
             }
         };
         
@@ -982,18 +1011,27 @@ export default class doctorController {
 
     uploadMeetingPhoto = asyncHandler(async (req, res) => {
         const file = req.file;
+        const user = req.user; // Get the logged-in user from verifyJWT
+
         if (!file) {
             throw new apiError(400, "No file uploaded.");
         }
+        if (!user || !user.id) {
+            throw new apiError(401, "User not authenticated.");
+        }
 
         try {
-            // 1. Upload the file from its temporary path to Google Drive
-            const links = await uploadAndGetLink(file.path, file.mimetype);
+            // --- 2. CREATE DYNAMIC FILENAME ---
+            const fileExt = path.extname(file.originalname) || '.jpg';
+            const uniqueName = `${user.id}_${Date.now()}${fileExt}`;
             
-            // 2. Delete the temporary file from the server
+            // --- 3. PASS FILENAME TO UPLOADER ---
+            const links = await uploadAndGetLink(file.path, file.mimetype, uniqueName);
+            
+            // 4. Delete the temporary file from the server
             await fs.unlink(file.path);
 
-            // 3. Return the Google Drive link to the frontend
+            // 5. Return the Google Drive link to the frontend
             res.status(200).json(new apiResponse(
                 200, 
                 { url: links.directLink }, // Send the direct download link
@@ -1008,5 +1046,42 @@ export default class doctorController {
             throw new apiError(500, "Failed to upload file to Google Drive.", [], uploadError.stack);
         }
     });
+
+
+    getDoctorByPhone = asyncHandler(async (req, res, next) => {
+        const { phone } = req.params;
+        if (!phone) {
+            throw new apiError(400, "Phone number is required");
+        }
+
+        const phone_processed = process_phone_no(phone);
+
+        // --- MODIFICATION: Select 'location' as well ---
+        const result = await pool.query(
+            "SELECT first_name, last_name, location FROM doctors WHERE phone = $1",
+            [phone_processed]
+        );
+
+        if (result.rows.length === 0) {
+            throw new apiError(404, "Doctor not found with this phone number");
+        }
+
+        const doctor = result.rows[0];
+        const fullName = `${doctor.first_name} ${doctor.last_name || ''}`.trim();
+
+        // --- MODIFICATION: Extract locality from the JSONB 'location' field ---
+        let locality = "";
+        if (doctor.location && typeof doctor.location === 'object' && doctor.location.locality) {
+            locality = doctor.location.locality;
+        }
+
+        res.status(200).json(new apiResponse(
+            200, 
+            // --- MODIFICATION: Return locality in the response ---
+            { name: fullName, locality: locality }, 
+            "Doctor details fetched successfully"
+        ));
+    });
+    
 
 }

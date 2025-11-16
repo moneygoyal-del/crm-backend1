@@ -8,7 +8,7 @@ import { addToSheetQueue } from "../utils/sheetQueue.util.js";
 import { sendOpdNotifications,fetchQrCodeUrl,sendAiSensy } from "../utils/notification.util.js";
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import fs from "fs/promises"; 
-
+import path from "path";
 
 export default class patientLeadController {
 
@@ -91,12 +91,12 @@ export default class patientLeadController {
             throw new apiError(401, "User not authenticated");
         }
         
-        // 1. Destructure ALL fields from the form
+        // 1. Destructure fields from req.body (files are in req.files)
         let {
             hospital_name, refree_phone_no, referee_name, patient_name, patient_phone,
             city, age: _age, gender, medical_condition, panel,
             booking_reference, appointment_date, appointment_time,
-            current_disposition,aadhar_card_url, pmjay_card_url
+            current_disposition
         } = req.body;
 
         // --- Data Processing and Validation ---
@@ -132,11 +132,12 @@ export default class patientLeadController {
         const created_by_agent_id = loggedInUser.id;
 
         // --- 2. Database Insertion ---
+        // Insert with NULL for file URLs. We will update them later.
         const newOPD = await pool.query(
             `INSERT INTO opd_bookings (
                 booking_reference, patient_name, patient_phone, age, gender, 
                 medical_condition, hospital_name, appointment_date, appointment_time, 
-                current_disposition,aadhar_card_url, pmjay_card_url, created_by_agent_id, last_interaction_date, 
+                current_disposition, aadhar_card_url, pmjay_card_url, created_by_agent_id, last_interaction_date, 
                 source, referee_id, created_at, updated_at, payment_mode
             ) 
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) 
@@ -144,7 +145,7 @@ export default class patientLeadController {
             [
                 booking_reference, patient_name, patient_phone_processed, age, gender,
                 medical_condition, hospital_name, appointment_date, appointment_time,
-                current_disposition,aadhar_card_url, pmjay_card_url, created_by_agent_id, last_interaction_date,
+                current_disposition, null, null, created_by_agent_id, last_interaction_date, // Insert NULL for URLs
                 "Doctor referral", referee_id, created_at, created_at, panel
             ]
         );
@@ -153,39 +154,88 @@ export default class patientLeadController {
             throw new apiError(500, "Failed to create new OPD booking.");
         }
 
+        // Get the ID of the row we just created
+        const newOpdId = newOPD.rows[0].id;
+
         // --- 3. RESPOND TO CLIENT (FAST) ---
-        // We send the success response *before* running background tasks.
         res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
 
-        // --- 4. RUN BACKGROUND TASKS SAFELY ---
-        // We create a new async function and call it without 'await'.
-        // This 'detaches' it from the main request, so its errors
-        // won't be caught by the asyncHandler.
+        // --- 4. RUN BACKGROUND TASKS SAFELY (RE-ORDERED) ---
         const runBackgroundTasks = async () => {
+            let aadharDriveUrl = null;
+            let pmjayDriveUrl = null;
+            
             try {
-                // --- Task A: Add to Google Sheet Queue ---
-                const sheetRow = [
-                    city, hospital_name, ndm_contact_processed, referee_name, 
-                    refree_phone_no, patient_name, patient_phone, _age, gender, 
-                    medical_condition, panel,aadhar_card_url || "N/A",
-                    pmjay_card_url || "N/A", null, created_at, booking_reference, 
-                    `${appointment_date} ${appointment_time}`, "Doctor referral", 
-                    current_disposition, last_interaction_date
-                ];
-                await addToSheetQueue("OPD_BOOKING", sheetRow);
-
-                // --- Task B: Trigger WhatsApp Notifications ---
+                // --- Task B (WhatsApp) can run immediately ---
                 const notificationData = {
-                    ...req.body, // Use all form data
+                    ...req.body,
                     booking_reference: newOPD.rows[0].booking_reference,
                     ndm_phone: ndm_contact_processed,
                     referee_phone: refree_phone_processed
                 };
                 await sendOpdNotifications(notificationData);
 
+                // --- Task C: File Uploads (NOW RUNS FIRST) ---
+                const aadharFile = req.files?.aadhar_document?.[0];
+                const pmjayFile = req.files?.pmjay_document?.[0];
+                
+                if (aadharFile) {
+                    try {
+                        const fileExt = path.extname(aadharFile.originalname) || '.jpg';
+                        const aadharFileName = `${booking_reference}_aadhar${fileExt}`;
+                        console.log(`Uploading Aadhar for ${newOpdId} as ${aadharFileName}...`);
+                        
+                        const links = await uploadAndGetLink(aadharFile.path, aadharFile.mimetype, aadharFileName);
+                        aadharDriveUrl = links.directLink;
+                    } catch(uploadErr) {
+                        console.error(`Aadhar upload failed for ${newOpdId}:`, uploadErr.message);
+                    } finally {
+                        await fs.unlink(aadharFile.path); // Always delete temp file
+                    }
+                }
+                
+                if (pmjayFile) {
+                    try {
+                        const fileExt = path.extname(pmjayFile.originalname) || '.jpg';
+                        const pmjayFileName = `${booking_reference}_pmjay${fileExt}`;
+                        console.log(`Uploading PMJAY for ${newOpdId} as ${pmjayFileName}...`);
+                        
+                        const links = await uploadAndGetLink(pmjayFile.path, pmjayFile.mimetype, pmjayFileName);
+                        pmjayDriveUrl = links.directLink;
+                    } catch(uploadErr) {
+                        console.error(`PMJAY upload failed for ${newOpdId}:`, uploadErr.message);
+                    } finally {
+                        await fs.unlink(pmjayFile.path); // Always delete temp file
+                    }
+                }
+
+                // --- Task D: Update DB with URLs (NOW RUNS SECOND) ---
+                if (aadharDriveUrl || pmjayDriveUrl) {
+                    console.log(`Updating DB with file URLs for ${newOpdId}...`);
+                    await pool.query(
+                        `UPDATE opd_bookings 
+                         SET aadhar_card_url = $1, pmjay_card_url = $2, updated_at = NOW()
+                         WHERE id = $3`,
+                        [aadharDriveUrl, pmjayDriveUrl, newOpdId]
+                    );
+                }
+
+                // --- Task A: Add to Google Sheet Queue (NOW RUNS LAST) ---
+                // Now aadharDriveUrl and pmjayDriveUrl have their final values
+                const sheetRow = [
+                    city, hospital_name, ndm_contact_processed, referee_name, 
+                    refree_phone_no, patient_name, patient_phone, _age, gender, 
+                    medical_condition, panel, 
+                    aadharDriveUrl || "N/A",  // Use the actual URL
+                    pmjayDriveUrl || "N/A",   // Use the actual URL
+                    null, created_at, booking_reference, 
+                    `${appointment_date} ${appointment_time}`, "Doctor referral", 
+                    current_disposition, last_interaction_date
+                ];
+                await addToSheetQueue("OPD_BOOKING", sheetRow);
+
+
             } catch (backgroundError) {
-                // If any background task fails, we just log it.
-                // We DON'T throw, so it won't crash the server.
                 console.error("--- BACKGROUND TASK FAILED (OPD Booking) ---");
                 console.error(backgroundError.message);
                 console.error("--- This did not stop the user's request. ---");

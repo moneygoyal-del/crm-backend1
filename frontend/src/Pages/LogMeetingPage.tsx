@@ -30,25 +30,30 @@ export default function LogMeetingPage() {
         comments_by_ndm: '',
         chances_of_getting_leads: 'medium',
         facilities: [] as string[],
-        timestamp_of_the_meeting: getTodayDate()
+        timestamp_of_the_meeting: getTodayDate() 
     });
 
-    // --- 2. State for file/GPS uploads ---
-    const [clinicImageLink, setClinicImageLink] = useState<string | null>(null);
-    const [selfieImageLink, setSelfieImageLink] = useState<string | null>(null);
-    const [isUploadingClinic, setIsUploadingClinic] = useState(false);
-    const [isUploadingSelfie, setIsUploadingSelfie] = useState(false);
+    // --- 2. NEW: State for file objects ---
+    const [clinicFile, setClinicFile] = useState<File | null>(null);
+    const [selfieFile, setSelfieFile] = useState<File | null>(null);
     
+    // --- State for GPS ---
     const [gpsLocation, setGpsLocation] = useState<{lat: number, lon: number} | null>(null);
     const [gpsError, setGpsError] = useState('');
 
+    // --- 3. State for form submission and UI ---
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
+    // --- 4. State for doctor auto-fill ---
+    const [isFetchingDoctor, setIsFetchingDoctor] = useState(false);
+    const [isDoctorFound, setIsDoctorFound] = useState(false);
+    const [doctorError, setDoctorError] = useState('');
+
     const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
-    // --- 3. Effect to get GPS on page load ---
+    // --- 5. Effect to get GPS on page load ---
     useEffect(() => {
         setGpsError('');
         if (navigator.geolocation) {
@@ -70,7 +75,7 @@ export default function LogMeetingPage() {
         }
     }, []);
 
-    // --- 4. Form field change handlers ---
+    // --- 6. Form field change handlers ---
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
@@ -86,51 +91,69 @@ export default function LogMeetingPage() {
         });
     };
 
-    // --- 5. File upload/remove handlers (from BookOpdPage) ---
-    const handleFileUpload = async (
-        file: File,
-        docType: 'clinic' | 'selfie'
-    ) => {
-        if (!file) return;
+    // --- 7. Function to fetch doctor details by phone ---
+    const fetchDoctorDetails = async () => {
+        const phone = formData.doctor_phone_number;
+        
+        if (phone.length !== 10) {
+            setDoctorError("");
+            setIsDoctorFound(false);
+            setFormData(prev => ({ ...prev, doctor_name: '', locality: '' }));
+            return;
+        }
 
-        if (docType === 'clinic') setIsUploadingClinic(true);
-        if (docType === 'selfie') setIsUploadingSelfie(true);
-        setError('');
-
-        const fileFormData = new FormData();
-        fileFormData.append('document', file);
+        setIsFetchingDoctor(true);
+        setDoctorError("");
+        setIsDoctorFound(false);
 
         try {
-            // Use the correct route from doctor.routes.js
-            const res = await api.post('/doctors/upload-meeting-photo', fileFormData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-            });
-            const driveUrl = res.data.data.url;
-            if (docType === 'clinic') setClinicImageLink(driveUrl);
-            if (docType === 'selfie') setSelfieImageLink(driveUrl);
+            const res = await api.get(`/doctors/get-by-phone/${phone}`);
+            const { name, locality } = res.data.data;
+            
+            setFormData(prev => ({ 
+                ...prev, 
+                doctor_name: name,
+                locality: locality || '' 
+            }));
+            setIsDoctorFound(true); 
+
         } catch (err) {
-            console.error("File upload failed:", err);
-            setError(`Failed to upload ${docType} photo. Please try again.`);
+            console.error("Failed to fetch doctor:", err);
+            setDoctorError("Doctor not found. Please enter details.");
+            setIsDoctorFound(false); 
+            setFormData(prev => ({ ...prev, doctor_name: '', locality: '' }));
         } finally {
-            if (docType === 'clinic') setIsUploadingClinic(false);
-            if (docType === 'selfie') setIsUploadingSelfie(false);
+            setIsFetchingDoctor(false);
+        }
+    };
+
+    // --- 8. File change and remove handlers ---
+    const handleFileChange = (
+        e: React.ChangeEvent<HTMLInputElement>,
+        docType: 'clinic' | 'selfie'
+    ) => {
+        const file = e.target.files ? e.target.files[0] : null;
+        if (docType === 'clinic') {
+            setClinicFile(file);
+        } else {
+            setSelfieFile(file);
         }
     };
 
     const handleFileRemove = (docType: 'clinic' | 'selfie') => {
         if (docType === 'clinic') {
-            setClinicImageLink(null);
+            setClinicFile(null);
             const input = document.getElementById('clinic-upload') as HTMLInputElement;
             if (input) input.value = "";
         }
         if (docType === 'selfie') {
-            setSelfieImageLink(null);
+            setSelfieFile(null);
             const input = document.getElementById('selfie-upload') as HTMLInputElement;
             if (input) input.value = "";
         }
     };
 
-    // --- 6. Form submit handler ---
+    // --- 9. Form submit handler ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -143,7 +166,7 @@ export default function LogMeetingPage() {
             return;
         }
 
-        if (!clinicImageLink || !selfieImageLink) {
+        if (!clinicFile || !selfieFile) {
             setError("Please upload both Clinic Photo and Selfie.");
             setLoading(false);
             return;
@@ -155,30 +178,45 @@ export default function LogMeetingPage() {
              return;
         }
 
-        // Format timestamp as "dd/mm/yyyy HH:MM:SS"
         const date = new Date(formData.timestamp_of_the_meeting.replace(/-/g, '/'));
         const localTime = new Date().toTimeString().split(' ')[0]; // Get current time
         const formattedTimestamp = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${localTime}`;
         
-        // Use a consistent GPS link format
         const gpsLink = `https://maps.google.com/?q=${gpsLocation.lat},${gpsLocation.lon}`;
 
-        const payload = {
-            ...formData,
-            timestamp_of_the_meeting: formattedTimestamp,
-            clinic_image_link: clinicImageLink,
-            selfie_image_link: selfieImageLink,
-            latitude: gpsLocation.lat,
-            longitude: gpsLocation.lon,
-            gps_location_of_the_clinic: gpsLink,
-            facilities: formData.facilities.join(', '),
-        };
+        const submissionFormData = new FormData();
+
+        Object.keys(formData).forEach(key => {
+            const typedKey = key as keyof typeof formData;
+            if (typedKey === 'facilities') {
+                submissionFormData.append('facilities', formData.facilities.join(', '));
+            } else if (typedKey === 'timestamp_of_the_meeting') {
+                submissionFormData.append('timestamp_of_the_meeting', formattedTimestamp);
+            } else {
+                submissionFormData.append(typedKey, formData[typedKey]);
+            }
+        });
+
+        submissionFormData.append('latitude', String(gpsLocation.lat));
+        submissionFormData.append('longitude', String(gpsLocation.lon));
+        submissionFormData.append('gps_location_of_the_clinic', gpsLink);
+        
+        if (clinicFile) {
+            submissionFormData.append('clinic_photo', clinicFile);
+        }
+        if (selfieFile) {
+            submissionFormData.append('selfie_photo', selfieFile);
+        }
 
         try {
-            const response = await api.post('/doctors/create-web', payload);
+            const response = await api.post('/doctors/create-web', submissionFormData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+
             setSuccess(`✅ Success! Meeting with Dr. ${response.data.data.doctor_name} logged.`);
             
-            // Reset form
             setFormData({
                 doctor_name: '', doctor_phone_number: '', locality: '',
                 opd_count: '', duration_of_meeting: '15', numPatientsDuringMeeting: '0',
@@ -186,10 +224,15 @@ export default function LogMeetingPage() {
                 chances_of_getting_leads: 'medium', facilities: [],
                 timestamp_of_the_meeting: getTodayDate()
             });
+            
             handleFileRemove('clinic');
             handleFileRemove('selfie');
             
+            setIsDoctorFound(false);
+            setDoctorError('');
+            
             setTimeout(() => setSuccess(''), 5000);
+
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
                 setError(err.response?.data?.message || "An error occurred.");
@@ -200,9 +243,9 @@ export default function LogMeetingPage() {
         setLoading(false);
     };
 
-    // --- 7. NEW: Enhanced JSX ---
+    // --- 10. JSX ---
     const inputStyles = "w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
-    const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
+    const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"; // This is now used
     const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
     const fileInputStyles = "w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50";
 
@@ -287,16 +330,49 @@ export default function LogMeetingPage() {
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2">
-                                    <label className={labelStyles}>Doctor's Name <span className="text-red-400">*</span></label>
-                                    <input type="text" name="doctor_name" value={formData.doctor_name} onChange={handleChange} className={inputStyles} placeholder="Enter doctor's full name" required />
-                                </div>
-                                <div>
                                     <label className={labelStyles}>Doctor's Phone <span className="text-red-400">*</span></label>
-                                    <input type="tel" name="doctor_phone_number" value={formData.doctor_phone_number} onChange={handleChange} maxLength={10} className={inputStyles} placeholder="10-digit phone" required />
+                                    <input 
+                                        type="tel" 
+                                        name="doctor_phone_number" 
+                                        value={formData.doctor_phone_number} 
+                                        onChange={handleChange} 
+                                        onBlur={fetchDoctorDetails}
+                                        maxLength={10} 
+                                        className={inputStyles} 
+                                        placeholder="10-digit phone (will auto-fill name)" 
+                                        required 
+                                        disabled={loading}
+                                    />
+                                    {isFetchingDoctor && <p className="text-xs text-yellow-400 mt-1">Searching for doctor...</p>}
+                                    {doctorError && <p className="text-xs text-red-400 mt-1">{doctorError}</p>}
+                                </div>
+
+                                <div>
+                                    <label className={labelStyles}>Doctor's Name <span className="text-red-400">*</span></label>
+                                    <input 
+                                        type="text" 
+                                        name="doctor_name" 
+                                        value={formData.doctor_name} 
+                                        onChange={handleChange} 
+                                        className={`${inputStyles} ${isDoctorFound ? 'text-gray-400' : 'text-white'}`} 
+                                        placeholder={"Enter doctor's full name"}
+                                        required 
+                                        readOnly={isDoctorFound}
+                                        disabled={loading}
+                                    />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Locality</label>
-                                    <input type="text" name="locality" value={formData.locality} onChange={handleChange} className={inputStyles} placeholder="Enter clinic area or locality" />
+                                    <input 
+                                        type="text" 
+                                        name="locality" 
+                                        value={formData.locality} 
+                                        onChange={handleChange} 
+                                        className={`${inputStyles} ${isDoctorFound ? 'text-gray-400' : 'text-white'}`} 
+                                        placeholder={"Enter clinic area or locality"}
+                                        readOnly={isDoctorFound}
+                                        disabled={loading}
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -309,20 +385,16 @@ export default function LogMeetingPage() {
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label className={labelStyles}>Date of Meeting</label>
-                                    <input type="date" name="timestamp_of_the_meeting" value={formData.timestamp_of_the_meeting} onChange={handleChange} max={getTodayDate()} className={inputStyles} />
-                                </div>
-                                <div>
                                     <label className={labelStyles}>Duration (minutes)</label>
-                                    <input type="number" name="duration_of_meeting" value={formData.duration_of_meeting} onChange={handleChange} min="1" className={inputStyles} />
+                                    <input type="number" name="duration_of_meeting" value={formData.duration_of_meeting} onChange={handleChange} min="1" className={inputStyles} disabled={loading} />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Avg. OPD Count (Daily)</label>
-                                    <input type="number" name="opd_count" value={formData.opd_count} onChange={handleChange} min="0" className={inputStyles} placeholder="e.g., 25" />
+                                    <input type="number" name="opd_count" value={formData.opd_count} onChange={handleChange} min="0" className={inputStyles} placeholder="e.g., 25" disabled={loading} />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Patients During Meeting</label>
-                                    <input type="number" name="numPatientsDuringMeeting" value={formData.numPatientsDuringMeeting} onChange={handleChange} min="0" className={inputStyles} />
+                                    <input type="number" name="numPatientsDuringMeeting" value={formData.numPatientsDuringMeeting} onChange={handleChange} min="0" className={inputStyles} disabled={loading} />
                                 </div>
                                 
                                 <div className="md:col-span-2">
@@ -337,6 +409,7 @@ export default function LogMeetingPage() {
                                                     checked={formData.facilities.includes(facility)} 
                                                     onChange={handleCheckboxChange}
                                                     className="rounded text-blue-500 bg-gray-800 border-gray-600 focus:ring-blue-500"
+                                                    disabled={loading}
                                                 />
                                                 <span>{facility}</span>
                                             </label>
@@ -346,7 +419,7 @@ export default function LogMeetingPage() {
                             </div>
                         </div>
 
-                         {/* Section 3: Notes & Vibe */}
+                         {/* Section 3: Notes & Vibe Check --- THIS IS THE FIX --- */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
                              <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
                                 <svg className="w-5 h-5 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -355,15 +428,15 @@ export default function LogMeetingPage() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2">
                                     <label className={labelStyles}>Doctor's Queries</label>
-                                    <textarea name="queries_by_the_doctor" value={formData.queries_by_the_doctor} onChange={handleChange} rows={3} className={inputStyles} placeholder="What did the doctor ask or discuss?" />
+                                    <textarea name="queries_by_the_doctor" value={formData.queries_by_the_doctor} onChange={handleChange} rows={3} className={inputStyles} placeholder="What did the doctor ask or discuss?" disabled={loading} />
                                 </div>
                                 <div className="md:col-span-2">
                                     <label className={labelStyles}>Your Comments/Notes</label>
-                                    <textarea name="comments_by_ndm" value={formData.comments_by_ndm} onChange={handleChange} rows={3} className={inputStyles} placeholder="Additional comments or observations" />
+                                    <textarea name="comments_by_ndm" value={formData.comments_by_ndm} onChange={handleChange} rows={3} className={inputStyles} placeholder="Additional comments or observations" disabled={loading} />
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Rating (1-5)</label>
-                                    <select name="rating" value={formData.rating} onChange={handleChange} className={selectStyles}>
+                                    <select name="rating" value={formData.rating} onChange={handleChange} className={selectStyles} disabled={loading}>
                                         <option value="1">1 - Very Poor</option>
                                         <option value="2">2 - Poor</option>
                                         <option value="3">3 - Average</option>
@@ -373,7 +446,7 @@ export default function LogMeetingPage() {
                                 </div>
                                 <div>
                                     <label className={labelStyles}>Chances of Getting Leads</label>
-                                    <select name="chances_of_getting_leads" value={formData.chances_of_getting_leads} onChange={handleChange} className={selectStyles}>
+                                    <select name="chances_of_getting_leads" value={formData.chances_of_getting_leads} onChange={handleChange} className={selectStyles} disabled={loading}>
                                         <option value="high">High</option>
                                         <option value="medium">Medium</option>
                                         <option value="low">Low</option>
@@ -381,6 +454,7 @@ export default function LogMeetingPage() {
                                 </div>
                             </div>
                         </div>
+                        {/* --- END FIX --- */}
 
                         {/* Section 4: Photo Proof */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
@@ -392,13 +466,22 @@ export default function LogMeetingPage() {
                                 {/* Clinic Photo */}
                                 <div>
                                     <label className={labelStyles}>Clinic Photo <span className="text-red-400">*</span></label>
-                                    {!clinicImageLink && !isUploadingClinic && (
-                                        <input id="clinic-upload" type="file" accept="image/*" capture="environment" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'clinic')} disabled={loading || isUploadingClinic || isUploadingSelfie} className={fileInputStyles} />
+                                    {!clinicFile && (
+                                        <input 
+                                            id="clinic-upload" 
+                                            type="file" 
+                                            accept="image/*" 
+                                            capture="environment" 
+                                            onChange={(e) => handleFileChange(e, 'clinic')} 
+                                            disabled={loading} 
+                                            className={fileInputStyles} 
+                                        />
                                     )}
-                                    {isUploadingClinic && <p className="text-sm text-yellow-400 mt-2">Uploading clinic photo...</p>}
-                                    {clinicImageLink && !isUploadingClinic && (
+                                    {clinicFile && (
                                         <div className="flex items-center justify-between p-2.5 bg-gray-700 rounded-lg">
-                                            <p className="text-sm text-green-400">Clinic Photo Uploaded ✓</p>
+                                            <p className="text-sm text-green-400 truncate w-4/5" title={clinicFile.name}>
+                                                {clinicFile.name}
+                                            </p>
                                             <button type="button" onClick={() => handleFileRemove('clinic')} disabled={loading} className="text-xs font-medium text-red-400 hover:text-red-300">
                                                 Remove
                                             </button>
@@ -408,13 +491,22 @@ export default function LogMeetingPage() {
                                 {/* Selfie Photo */}
                                 <div>
                                     <label className={labelStyles}>Selfie with Clinic <span className="text-red-400">*</span></label>
-                                    {!selfieImageLink && !isUploadingSelfie && (
-                                        <input id="selfie-upload" type="file" accept="image/*" capture="user" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'selfie')} disabled={loading || isUploadingClinic || isUploadingSelfie} className={fileInputStyles} />
+                                    {!selfieFile && (
+                                        <input 
+                                            id="selfie-upload" 
+                                            type="file" 
+                                            accept="image/*" 
+                                            capture="user" 
+                                            onChange={(e) => handleFileChange(e, 'selfie')} 
+                                            disabled={loading} 
+                                            className={fileInputStyles} 
+                                        />
                                     )}
-                                    {isUploadingSelfie && <p className="text-sm text-yellow-400 mt-2">Uploading selfie...</p>}
-                                    {selfieImageLink && !isUploadingSelfie && (
+                                    {selfieFile && (
                                         <div className="flex items-center justify-between p-2.5 bg-gray-700 rounded-lg">
-                                            <p className="text-sm text-green-400">Selfie Uploaded ✓</p>
+                                            <p className="text-sm text-green-400 truncate w-4/5" title={selfieFile.name}>
+                                                {selfieFile.name}
+                                            </p>
                                             <button type="button" onClick={() => handleFileRemove('selfie')} disabled={loading} className="text-xs font-medium text-red-400 hover:text-red-300">
                                                 Remove
                                             </button>
@@ -428,7 +520,7 @@ export default function LogMeetingPage() {
                         <div className="pt-6 border-t border-gray-700">
                             <button
                                 type="submit"
-                                disabled={loading || isUploadingClinic || isUploadingSelfie || !!gpsError}
+                                disabled={loading || !!gpsError}
                                 className="w-full py-3 px-4 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                             >
                                 {loading ? (
