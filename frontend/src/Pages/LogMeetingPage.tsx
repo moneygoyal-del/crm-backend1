@@ -30,15 +30,14 @@ export default function LogMeetingPage() {
         comments_by_ndm: '',
         chances_of_getting_leads: 'medium',
         facilities: [] as string[],
-        timestamp_of_the_meeting: getTodayDate()
+        timestamp_of_the_meeting: getTodayDate() 
     });
 
-    // --- 2. State for file/GPS uploads ---
-    const [clinicImageLink, setClinicImageLink] = useState<string | null>(null);
-    const [selfieImageLink, setSelfieImageLink] = useState<string | null>(null);
-    const [isUploadingClinic, setIsUploadingClinic] = useState(false);
-    const [isUploadingSelfie, setIsUploadingSelfie] = useState(false);
+    // --- 2. NEW: State for file objects ---
+    const [clinicFile, setClinicFile] = useState<File | null>(null);
+    const [selfieFile, setSelfieFile] = useState<File | null>(null);
     
+    // --- State for GPS ---
     const [gpsLocation, setGpsLocation] = useState<{lat: number, lon: number} | null>(null);
     const [gpsError, setGpsError] = useState('');
 
@@ -92,15 +91,13 @@ export default function LogMeetingPage() {
         });
     };
 
-    // --- 7. MODIFIED: Function to fetch doctor details by phone ---
+    // --- 7. Function to fetch doctor details by phone ---
     const fetchDoctorDetails = async () => {
         const phone = formData.doctor_phone_number;
         
-        // Only fetch if it's a 10-digit number
         if (phone.length !== 10) {
             setDoctorError("");
             setIsDoctorFound(false);
-            // Clear fields if phone number is changed and invalid
             setFormData(prev => ({ ...prev, doctor_name: '', locality: '' }));
             return;
         }
@@ -110,70 +107,47 @@ export default function LogMeetingPage() {
         setIsDoctorFound(false);
 
         try {
-            // This endpoint now returns { name: "...", locality: "..." }
             const res = await api.get(`/doctors/get-by-phone/${phone}`);
             const { name, locality } = res.data.data;
             
-            // Auto-fill form data with fetched values
             setFormData(prev => ({ 
                 ...prev, 
                 doctor_name: name,
-                locality: locality || '' // Use fetched locality or empty string
+                locality: locality || '' 
             }));
-            setIsDoctorFound(true); // Lock the fields
+            setIsDoctorFound(true); 
 
         } catch (err) {
             console.error("Failed to fetch doctor:", err);
             setDoctorError("Doctor not found. Please enter details.");
-            setIsDoctorFound(false); // Unlock fields
-            // Clear fields so user can type
+            setIsDoctorFound(false); 
             setFormData(prev => ({ ...prev, doctor_name: '', locality: '' }));
         } finally {
             setIsFetchingDoctor(false);
         }
     };
-    // --- END MODIFICATION ---
 
-
-    // --- 8. File upload/remove handlers (from BookOpdPage) ---
-    const handleFileUpload = async (
-        file: File,
+    // --- 8. File change and remove handlers ---
+    const handleFileChange = (
+        e: React.ChangeEvent<HTMLInputElement>,
         docType: 'clinic' | 'selfie'
     ) => {
-        if (!file) return;
-
-        if (docType === 'clinic') setIsUploadingClinic(true);
-        if (docType === 'selfie') setIsUploadingSelfie(true);
-        setError('');
-
-        const fileFormData = new FormData();
-        fileFormData.append('document', file);
-
-        try {
-            // Use the correct route from doctor.routes.js
-            const res = await api.post('/doctors/upload-meeting-photo', fileFormData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-            });
-            const driveUrl = res.data.data.url;
-            if (docType === 'clinic') setClinicImageLink(driveUrl);
-            if (docType === 'selfie') setSelfieImageLink(driveUrl);
-        } catch (err) {
-            console.error("File upload failed:", err);
-            setError(`Failed to upload ${docType} photo. Please try again.`);
-        } finally {
-            if (docType === 'clinic') setIsUploadingClinic(false);
-            if (docType === 'selfie') setIsUploadingSelfie(false);
+        const file = e.target.files ? e.target.files[0] : null;
+        if (docType === 'clinic') {
+            setClinicFile(file);
+        } else {
+            setSelfieFile(file);
         }
     };
 
     const handleFileRemove = (docType: 'clinic' | 'selfie') => {
         if (docType === 'clinic') {
-            setClinicImageLink(null);
+            setClinicFile(null);
             const input = document.getElementById('clinic-upload') as HTMLInputElement;
             if (input) input.value = "";
         }
         if (docType === 'selfie') {
-            setSelfieImageLink(null);
+            setSelfieFile(null);
             const input = document.getElementById('selfie-upload') as HTMLInputElement;
             if (input) input.value = "";
         }
@@ -192,7 +166,7 @@ export default function LogMeetingPage() {
             return;
         }
 
-        if (!clinicImageLink || !selfieImageLink) {
+        if (!clinicFile || !selfieFile) {
             setError("Please upload both Clinic Photo and Selfie.");
             setLoading(false);
             return;
@@ -204,30 +178,45 @@ export default function LogMeetingPage() {
              return;
         }
 
-        // Format timestamp as "dd/mm/yyyy HH:MM:SS"
         const date = new Date(formData.timestamp_of_the_meeting.replace(/-/g, '/'));
         const localTime = new Date().toTimeString().split(' ')[0]; // Get current time
         const formattedTimestamp = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${localTime}`;
         
-        // Use a consistent GPS link format
         const gpsLink = `https://maps.google.com/?q=${gpsLocation.lat},${gpsLocation.lon}`;
 
-        const payload = {
-            ...formData,
-            timestamp_of_the_meeting: formattedTimestamp,
-            clinic_image_link: clinicImageLink,
-            selfie_image_link: selfieImageLink,
-            latitude: gpsLocation.lat,
-            longitude: gpsLocation.lon,
-            gps_location_of_the_clinic: gpsLink,
-            facilities: formData.facilities.join(', '),
-        };
+        const submissionFormData = new FormData();
+
+        Object.keys(formData).forEach(key => {
+            const typedKey = key as keyof typeof formData;
+            if (typedKey === 'facilities') {
+                submissionFormData.append('facilities', formData.facilities.join(', '));
+            } else if (typedKey === 'timestamp_of_the_meeting') {
+                submissionFormData.append('timestamp_of_the_meeting', formattedTimestamp);
+            } else {
+                submissionFormData.append(typedKey, formData[typedKey]);
+            }
+        });
+
+        submissionFormData.append('latitude', String(gpsLocation.lat));
+        submissionFormData.append('longitude', String(gpsLocation.lon));
+        submissionFormData.append('gps_location_of_the_clinic', gpsLink);
+        
+        if (clinicFile) {
+            submissionFormData.append('clinic_photo', clinicFile);
+        }
+        if (selfieFile) {
+            submissionFormData.append('selfie_photo', selfieFile);
+        }
 
         try {
-            const response = await api.post('/doctors/create-web', payload);
+            const response = await api.post('/doctors/create-web', submissionFormData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+
             setSuccess(`✅ Success! Meeting with Dr. ${response.data.data.doctor_name} logged.`);
             
-            // Reset form
             setFormData({
                 doctor_name: '', doctor_phone_number: '', locality: '',
                 opd_count: '', duration_of_meeting: '15', numPatientsDuringMeeting: '0',
@@ -235,14 +224,15 @@ export default function LogMeetingPage() {
                 chances_of_getting_leads: 'medium', facilities: [],
                 timestamp_of_the_meeting: getTodayDate()
             });
+            
             handleFileRemove('clinic');
             handleFileRemove('selfie');
             
-            // Reset doctor lookup state
             setIsDoctorFound(false);
             setDoctorError('');
             
             setTimeout(() => setSuccess(''), 5000);
+
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
                 setError(err.response?.data?.message || "An error occurred.");
@@ -255,7 +245,7 @@ export default function LogMeetingPage() {
 
     // --- 10. JSX ---
     const inputStyles = "w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
-    const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
+    const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"; // This is now used
     const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
     const fileInputStyles = "w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50";
 
@@ -332,7 +322,7 @@ export default function LogMeetingPage() {
                     {/* Form */}
                     <form onSubmit={handleSubmit} className="p-6 space-y-6">
                         
-                        {/* Section 1: Doctor Information --- MODIFIED --- */}
+                        {/* Section 1: Doctor Information */}
                         <div className="space-y-4">
                             <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
                                 <svg className="w-5 h-5 mr-2 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
@@ -346,7 +336,7 @@ export default function LogMeetingPage() {
                                         name="doctor_phone_number" 
                                         value={formData.doctor_phone_number} 
                                         onChange={handleChange} 
-                                        onBlur={fetchDoctorDetails} // <-- Triggers lookup
+                                        onBlur={fetchDoctorDetails}
                                         maxLength={10} 
                                         className={inputStyles} 
                                         placeholder="10-digit phone (will auto-fill name)" 
@@ -367,7 +357,7 @@ export default function LogMeetingPage() {
                                         className={`${inputStyles} ${isDoctorFound ? 'text-gray-400' : 'text-white'}`} 
                                         placeholder={"Enter doctor's full name"}
                                         required 
-                                        readOnly={isDoctorFound} // <-- Make readOnly, not disabled
+                                        readOnly={isDoctorFound}
                                         disabled={loading}
                                     />
                                 </div>
@@ -380,14 +370,12 @@ export default function LogMeetingPage() {
                                         onChange={handleChange} 
                                         className={`${inputStyles} ${isDoctorFound ? 'text-gray-400' : 'text-white'}`} 
                                         placeholder={"Enter clinic area or locality"}
-                                        readOnly={isDoctorFound} // <-- Make readOnly, not disabled
+                                        readOnly={isDoctorFound}
                                         disabled={loading}
                                     />
                                 </div>
                             </div>
                         </div>
-                        {/* --- END MODIFICATION --- */}
-
 
                         {/* Section 2: Meeting Details */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
@@ -396,10 +384,6 @@ export default function LogMeetingPage() {
                                 Meeting Details
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className={labelStyles}>Date of Meeting</label>
-                                    <input type="date" name="timestamp_of_the_meeting" value={formData.timestamp_of_the_meeting} onChange={handleChange} max={getTodayDate()} className={inputStyles} disabled={loading} />
-                                </div>
                                 <div>
                                     <label className={labelStyles}>Duration (minutes)</label>
                                     <input type="number" name="duration_of_meeting" value={formData.duration_of_meeting} onChange={handleChange} min="1" className={inputStyles} disabled={loading} />
@@ -435,7 +419,7 @@ export default function LogMeetingPage() {
                             </div>
                         </div>
 
-                         {/* Section 3: Notes & Vibe */}
+                         {/* Section 3: Notes & Vibe Check --- THIS IS THE FIX --- */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
                              <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
                                 <svg className="w-5 h-5 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -470,6 +454,7 @@ export default function LogMeetingPage() {
                                 </div>
                             </div>
                         </div>
+                        {/* --- END FIX --- */}
 
                         {/* Section 4: Photo Proof */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
@@ -481,13 +466,22 @@ export default function LogMeetingPage() {
                                 {/* Clinic Photo */}
                                 <div>
                                     <label className={labelStyles}>Clinic Photo <span className="text-red-400">*</span></label>
-                                    {!clinicImageLink && !isUploadingClinic && (
-                                        <input id="clinic-upload" type="file" accept="image/*" capture="environment" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'clinic')} disabled={loading || isUploadingClinic || isUploadingSelfie} className={fileInputStyles} />
+                                    {!clinicFile && (
+                                        <input 
+                                            id="clinic-upload" 
+                                            type="file" 
+                                            accept="image/*" 
+                                            capture="environment" 
+                                            onChange={(e) => handleFileChange(e, 'clinic')} 
+                                            disabled={loading} 
+                                            className={fileInputStyles} 
+                                        />
                                     )}
-                                    {isUploadingClinic && <p className="text-sm text-yellow-400 mt-2">Uploading clinic photo...</p>}
-                                    {clinicImageLink && !isUploadingClinic && (
+                                    {clinicFile && (
                                         <div className="flex items-center justify-between p-2.5 bg-gray-700 rounded-lg">
-                                            <p className="text-sm text-green-400">Clinic Photo Uploaded ✓</p>
+                                            <p className="text-sm text-green-400 truncate w-4/5" title={clinicFile.name}>
+                                                {clinicFile.name}
+                                            </p>
                                             <button type="button" onClick={() => handleFileRemove('clinic')} disabled={loading} className="text-xs font-medium text-red-400 hover:text-red-300">
                                                 Remove
                                             </button>
@@ -497,13 +491,22 @@ export default function LogMeetingPage() {
                                 {/* Selfie Photo */}
                                 <div>
                                     <label className={labelStyles}>Selfie with Clinic <span className="text-red-400">*</span></label>
-                                    {!selfieImageLink && !isUploadingSelfie && (
-                                        <input id="selfie-upload" type="file" accept="image/*" capture="user" onChange={(e) => e.target.files && handleFileUpload(e.target.files[0], 'selfie')} disabled={loading || isUploadingClinic || isUploadingSelfie} className={fileInputStyles} />
+                                    {!selfieFile && (
+                                        <input 
+                                            id="selfie-upload" 
+                                            type="file" 
+                                            accept="image/*" 
+                                            capture="user" 
+                                            onChange={(e) => handleFileChange(e, 'selfie')} 
+                                            disabled={loading} 
+                                            className={fileInputStyles} 
+                                        />
                                     )}
-                                    {isUploadingSelfie && <p className="text-sm text-yellow-400 mt-2">Uploading selfie...</p>}
-                                    {selfieImageLink && !isUploadingSelfie && (
+                                    {selfieFile && (
                                         <div className="flex items-center justify-between p-2.5 bg-gray-700 rounded-lg">
-                                            <p className="text-sm text-green-400">Selfie Uploaded ✓</p>
+                                            <p className="text-sm text-green-400 truncate w-4/5" title={selfieFile.name}>
+                                                {selfieFile.name}
+                                            </p>
                                             <button type="button" onClick={() => handleFileRemove('selfie')} disabled={loading} className="text-xs font-medium text-red-400 hover:text-red-300">
                                                 Remove
                                             </button>
@@ -517,7 +520,7 @@ export default function LogMeetingPage() {
                         <div className="pt-6 border-t border-gray-700">
                             <button
                                 type="submit"
-                                disabled={loading || isUploadingClinic || isUploadingSelfie || !!gpsError}
+                                disabled={loading || !!gpsError}
                                 className="w-full py-3 px-4 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                             >
                                 {loading ? (
