@@ -5,6 +5,7 @@ import { process_phone_no, processString } from "../helper/preprocess_data.helpe
 import { pool } from "../DB/db.js"
 import readCsvFile from "../helper/read_csv.helper.js"
 import fs from "fs"
+import { logAudit } from "../utils/auditLogger.util.js"
 
 export default class userController {
     createUser = asyncHandler(async (req, res, next) => {
@@ -42,6 +43,24 @@ export default class userController {
 
         if (!newUser.rows) {
             throw new apiError(500, "Failed to create new user in database");
+        }
+
+        const createdUserId = newUser.rows[0].id;
+
+        // --- AUDIT LOG ---
+        
+        if (req.user) {
+            await logAudit(
+                req.user.id,       // The Admin/Team Lead who created this user
+                'USER_CREATED',
+                'user',
+                createdUserId,
+                {
+                    newUserName: first_name,
+                    role: role,
+                    teamId: team_id
+                }
+            );
         }
 
         res.status(201).json(new apiResponse(200, newUser.rows, "User successfully created"));
@@ -135,6 +154,23 @@ export default class userController {
 
         if (deleteUser.rowCount == 0) {
             throw new apiError(404, "User not found or failed to delete");
+        }
+
+      
+        const deletedUser = deleteUser.rows[0];
+        
+        // --- AUDIT LOG ---
+        if (req.user) {
+            await logAudit(
+                req.user.id,
+                'USER_DELETED',
+                'user',
+                deletedUser.id,
+                {
+                    deletedUserName: deletedUser.first_name,
+                    phone: deletedUser.phone
+                }
+            );
         }
 
         res.status(200).json(new apiResponse(200, deleteUser.rows[0], "User successfully deleted"));

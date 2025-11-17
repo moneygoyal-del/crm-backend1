@@ -10,6 +10,7 @@ import { addToSheetQueue } from "../utils/sheetQueue.util.js"; // <-- USE THE QU
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import { sendDoctorMeetingNotification } from "../utils/notification.util.js";
 import path from "path";
+import { logAudit } from "../utils/auditLogger.util.js";
 
 export default class doctorController {
     // --- THIS IS YOUR ORIGINAL FUNCTION (UNCHANGED) ---
@@ -256,6 +257,18 @@ export default class doctorController {
         );
 
         const newMeetingId = meeting.rows[0].id;
+
+        await logAudit(
+            loggedInUser.id,
+            'MEETING_LOGGED',
+            'doctor_meeting',
+            newMeetingId,
+            {
+                doctorName: fullName,
+                outcome: chances_of_getting_leads,
+                location: locality
+            }
+        );
         
         // --- 6. RESPOND TO CLIENT (FAST) ---
         res.status(201).json(new apiResponse(201, { ...meeting.rows[0], doctor_name: fullName }, "Doctor and meeting successfully created"));
@@ -429,9 +442,26 @@ export default class doctorController {
 
         const updatedResult = await pool.query(updateQuery, queryParams);
 
+
+
         if (updatedResult.rowCount === 0) {
             throw new apiError(404, "Doctor not found for update.");
         }
+
+        const updatedDoc = updatedResult.rows[0];
+
+          if (req.user) {
+              await logAudit(
+                req.user.id,
+                'DOCTOR_UPDATE',
+                'doctor',
+                 updatedDoc.id,
+         {
+            doctorName: updatedDoc.first_name,
+            phone: updatedDoc.phone
+         }
+    );
+           }
 
         res.status(200).json(
             new apiResponse(
