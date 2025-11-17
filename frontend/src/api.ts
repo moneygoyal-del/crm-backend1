@@ -42,8 +42,6 @@ const handleLogout = () => {
 // --- 1. Request Interceptor ---
 api.interceptors.request.use(
     (config) => {
-        // (Optional Proactive Check can go here, but Response Interceptor covers it too)
-        
         // Always attach the current access token
         const token = localStorage.getItem('authToken');
         if (token) {
@@ -67,13 +65,13 @@ api.interceptors.response.use(
         // If error is 401 Unauthorized AND we haven't retried this request yet
         if (error.response?.status === 401 && !originalRequest._retry) {
             
-            // CRITICAL: If the failed request WAS the refresh attempt itself, 
-            // we must log out to avoid an infinite loop.
-            if (originalRequest.url?.includes('/auth/refresh')) {
-                console.log("Refresh token is invalid or expired. Logging out.");
-                handleLogout();
+       
+            if (originalRequest.url?.includes('/auth/verify-otp') || 
+                originalRequest.url?.includes('/auth/send-otp') ||
+                originalRequest.url?.includes('/auth/refresh')) {
                 return Promise.reject(error);
             }
+            // --- END FIX ---
 
             if (isRefreshing) {
                 // If already refreshing, queue this request
@@ -100,10 +98,8 @@ api.interceptors.response.use(
 
             try {
                 // Attempt to get a new access token
-                // We use 'axios' directly here to avoid triggering our own interceptors
                 const res = await axios.post(`${API_BASE_URL}/auth/refresh`, 
                     { refreshToken: refreshToken },
-                    // Optionally pass the old access token for extra user validation if your backend supports it
                     { headers: { Authorization: localStorage.getItem('authToken') ? `Bearer ${localStorage.getItem('authToken')}` : '' } } 
                 );
                 
