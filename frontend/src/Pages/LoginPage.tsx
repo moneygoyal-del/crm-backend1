@@ -66,8 +66,15 @@ export default function LoginPage() {
 
     try {
       const response = await api.post(`/auth/verify-otp`, { phone, otp });
-      localStorage.setItem("authToken", response.data.data.token);
-      localStorage.setItem("user", JSON.stringify(response.data.data.user));
+      
+      // --- UPDATED FOR REFRESH TOKEN APPROACH ---
+      const { accessToken, refreshToken, accessTokenExpiresAt, user } = response.data.data;
+
+      // Store tokens and user details
+      localStorage.setItem("authToken", accessToken); // The short-lived access token
+      localStorage.setItem("refreshToken", refreshToken); // The long-lived refresh token
+      localStorage.setItem("authTokenExpiry", accessTokenExpiresAt); // For proactive checks
+      localStorage.setItem("user", JSON.stringify(user));
 
       setSuccess("Login successful!");
       setIsExiting(true);
@@ -87,7 +94,6 @@ export default function LoginPage() {
     }
   };
 
-  // --- NEW RESPONSIVE JSX ---
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-gray-900">
       

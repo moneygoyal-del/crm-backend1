@@ -6,7 +6,7 @@ import apiError from "../utils/apiError.utils.js";
 import { sendWhatsAppMessage } from "../utils/whatsapp.util.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { randomInt } from "crypto";
+import { randomInt,randomBytes } from "crypto";
 
 // (Config and helper function are unchanged)
 const OTP_RATE_LIMIT_COUNT = 3;
@@ -92,7 +92,7 @@ export default class authController {
         res.status(200).json(new apiResponse(200, null, "OTP sent successfully"));
     });
 
-    // --- 2. VERIFY OTP AND LOGIN (Unchanged from previous step) ---
+    // --- 2. VERIFY OTP AND LOGIN 
     verifyOtp = asyncHandler(async (req, res) => {
         const { phone, otp } = req.body;
         if (!phone || !otp) throw new apiError(400, "Phone and OTP are required");
@@ -137,20 +137,52 @@ export default class authController {
         }
 
         // 4. Delete ALL OTPs for this user for security and cleanup
-        await pool.query("DELETE FROM otps WHERE user_id = $1", [user.id]);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            // Update the user's last_login timestamp
+            await client.query("UPDATE crm.users SET last_login = NOW() WHERE id = $1", [user.id]);
+            // Delete all OTPs for this user
+            await client.query("DELETE FROM crm.otps WHERE user_id = $1", [user.id]);
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e; // Let asyncHandler catch it
+        } finally {
+            client.release();
+        }
 
         // 5. Create the JWT Payload
-        const payload = {
+        const accessTokenPayload = {
             id: user.id,
             phone: user.phone
         };
+        const accessTokenExpiresIn = '15m'; // <-- SHORT! 15 minutes
+        const accessToken = jwt.sign(
+            accessTokenPayload, 
+            process.env.JWT_SECRET, 
+            { expiresIn: accessTokenExpiresIn }
+        );
+        // Calculate the *exact* expiry time to send to the frontend
+        const accessTokenExpiresAt = Date.now() + (15 * 60 * 1000);
 
-        // 6. Sign the JWT with your 3-DAY expiry
-        const token = jwt.sign(payload, process.env.JWT_SECRET, {
-            expiresIn: process.env.JWT_EXPIRE_IN || '1m'
-        });
+       
+       
+        
+        // --- 6. CREATE REFRESH TOKEN (Long-lived & Stored) ---
+        const refreshToken = randomBytes(64).toString('hex');
+        const refreshTokenExpiresInDays = 7;
+        const refreshTokenExpiresAt = new Date(Date.now() + (refreshTokenExpiresInDays * 24 * 60 * 60 * 1000));
+        const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
 
-        // 7. Send back the token and user info
+        // Store the HASH in the database, not the token itself
+        await pool.query(
+            `INSERT INTO crm.user_refresh_tokens (user_id, token_hash, expires_at) 
+             VALUES ($1, $2, $3)`,
+            [user.id, refreshTokenHash, refreshTokenExpiresAt]
+        );
+
+        // --- 7. Send back BOTH tokens and user info ---
         const userData = {
             id: user.id,
             name: `${user.first_name} ${user.last_name || ''}`.trim()
@@ -158,8 +190,87 @@ export default class authController {
         
         res.status(200).json(new apiResponse(
             200,
-            { token: token, user: userData },
+            { 
+                user: userData,
+                accessToken: accessToken,
+                accessTokenExpiresAt: accessTokenExpiresAt, // For Approach 1-style proactive check
+                refreshToken: refreshToken // <-- Send the *raw* token to the client
+            },
             "Login successful"
+        ));
+    
+    });
+    handleRefreshToken = asyncHandler(async (req, res) => {
+        const { refreshToken } = req.body;
+        if (!refreshToken) throw new apiError(400, "Refresh token is required");
+
+        // 1. Find the token hash in the database
+        // We can't query by the token itself, so this is tricky. We must find all tokens for
+        // the user *first* by verifying the JWT (if it contains user ID) or find another way.
+        
+        // --- A more secure way: ---
+        // Let's decode the *expired* access token to find the user ID.
+        // This is safe because we don't trust its expiry, just its payload.
+        const oldAccessToken = req.headers["authorization"]?.split(" ")[1];
+        if (!oldAccessToken) throw new apiError(401, "Old access token is required");
+
+        const decodedOldToken = jwt.decode(oldAccessToken);
+        const userId = decodedOldToken?.id;
+        if (!userId) throw new apiError(401, "Invalid old access token");
+
+        // 2. Get all valid refresh tokens for that user
+        const tokenResult = await pool.query(
+            "SELECT id, token_hash FROM crm.user_refresh_tokens WHERE user_id = $1 AND expires_at > NOW()",
+            [userId]
+        );
+
+        if (tokenResult.rows.length === 0) throw new apiError(401, "No valid refresh tokens found. Please log in again.");
+
+        // 3. Find the matching token
+        let foundTokenDbId = null;
+        for (const row of tokenResult.rows) {
+            const didMatch = await bcrypt.compare(refreshToken, row.token_hash);
+            if (didMatch) {
+                foundTokenDbId = row.id;
+                break;
+            }
+        }
+
+        if (!foundTokenDbId) throw new apiError(401, "Invalid refresh token. Please log in again.");
+
+        // --- 4. SECURITY (Token Rotation): Delete the token we just used ---
+        // This prevents replay attacks.
+        await pool.query("DELETE FROM crm.user_refresh_tokens WHERE id = $1", [foundTokenDbId]);
+
+        // 5. Issue a new *Access Token* (and a new Refresh Token for best security)
+        
+        // --- Re-create Access Token ---
+        const userResult = await pool.query("SELECT id, phone, first_name FROM crm.users WHERE id = $1", [userId]);
+        const user = userResult.rows[0];
+        const accessTokenPayload = { id: user.id, phone: user.phone };
+        const accessTokenExpiresIn = '15m';
+        const accessToken = jwt.sign(accessTokenPayload, process.env.JWT_SECRET, { expiresIn: accessTokenExpiresIn });
+        const accessTokenExpiresAt = Date.now() + (15 * 60 * 1000);
+
+        // --- Re-create Refresh Token ---
+        const newRefreshToken = randomBytes(64).toString('hex');
+        const newRefreshTokenExpiresAt = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000));
+        const newRefreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
+        
+        await pool.query(
+            "INSERT INTO crm.user_refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+            [user.id, newRefreshTokenHash, newRefreshTokenExpiresAt]
+        );
+
+        // 6. Send the new tokens
+        res.status(200).json(new apiResponse(
+            200,
+            {
+                accessToken: accessToken,
+                accessTokenExpiresAt: accessTokenExpiresAt,
+                refreshToken: newRefreshToken
+            },
+            "Token refreshed successfully"
         ));
     });
 }
