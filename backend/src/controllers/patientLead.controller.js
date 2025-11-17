@@ -9,6 +9,7 @@ import { sendOpdNotifications,fetchQrCodeUrl,sendAiSensy } from "../utils/notifi
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import fs from "fs/promises"; 
 import path from "path";
+import { logAudit } from "../utils/auditLogger.util.js";
 
 export default class patientLeadController {
 
@@ -156,6 +157,18 @@ export default class patientLeadController {
 
         // Get the ID of the row we just created
         const newOpdId = newOPD.rows[0].id;
+
+        await logAudit(
+            loggedInUser.id, 
+            'CREATE_OPD_BOOKING_WEB', 
+            'opd_booking', 
+            newOpdId, 
+            { 
+                patientName: patient_name, 
+                hospital: hospital_name, 
+                refereePhone: refree_phone_no
+            }
+        );
 
         // --- 3. RESPOND TO CLIENT (FAST) ---
         res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
