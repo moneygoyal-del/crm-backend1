@@ -7,6 +7,7 @@ import { sendWhatsAppMessage } from "../utils/whatsapp.util.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { randomInt,randomBytes } from "crypto";
+import { logAudit } from "../utils/auditLogger.util.js";
 
 // (Config and helper function are unchanged)
 const OTP_RATE_LIMIT_COUNT = 3;
@@ -133,6 +134,13 @@ export default class authController {
         }
         
         if (!isOtpValid) {
+            await logAudit(
+                user.id, 
+                'LOGIN_FAILED', 
+                'auth', 
+                null, 
+                { reason: 'Invalid OTP provided' }
+            );
             throw new apiError(401, "Invalid or expired OTP");
         }
 
@@ -187,6 +195,14 @@ export default class authController {
             id: user.id,
             name: `${user.first_name} ${user.last_name || ''}`.trim()
         };
+
+        await logAudit(
+            user.id,
+            'LOGIN_SUCCESS',
+            'auth',
+            null,
+            { ip: req.ip } 
+        );
         
         res.status(200).json(new apiResponse(
             200,

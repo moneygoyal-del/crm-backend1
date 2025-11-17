@@ -690,6 +690,19 @@ export default class patientLeadController {
         }
         
         const updatedRow = updatedResult.rows[0];
+
+        if (req.user) {
+            await logAudit(
+                req.user.id,
+                'PATIENT_UPDATE',
+                'opd_booking',
+                updatedRow.id,
+                {
+                    changedFields: updateFields, // e.g., ["status", "phone"]
+                    bookingRef: updatedRow.booking_reference
+                }
+            );
+        }
         
         // --- RESPOND TO CLIENT FIRST ---
         res.status(200).json(new apiResponse(200, {
