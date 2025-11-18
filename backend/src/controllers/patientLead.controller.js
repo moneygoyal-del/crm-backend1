@@ -83,7 +83,6 @@ export default class patientLeadController {
 
         res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
     });
-
   
     createOpdBookingFromWeb = asyncHandler(async (req, res, next) => {
         // Get user info from the JWT token
@@ -258,7 +257,6 @@ export default class patientLeadController {
         // Call the function to run in the background.
         runBackgroundTasks();
     });
-
     
     createPatientLeadBatchUpload = asyncHandler(async (req, res, next) => {
         const file = req.file;
@@ -456,7 +454,6 @@ export default class patientLeadController {
         }, "Opd Bookings batch processing complete."));
 
     });
-
     
     createDispositionLogBatchUpload = asyncHandler(async (req, res, next) => {
         const file = req.file;
@@ -584,7 +581,6 @@ export default class patientLeadController {
         }, "OPD Disposition Logs batch processing complete."));
 
     });
-
     
     updatePatientLead = asyncHandler(async (req, res, next) => {
         let {
@@ -760,8 +756,6 @@ export default class patientLeadController {
         
         runBackgroundTasks();
     });
-
-
     
     deletePatientLead = asyncHandler(async (req, res, next) => {
         const { id, booking_reference } = req.body;
@@ -845,5 +839,109 @@ export default class patientLeadController {
             { patient_phone: result.rows[0].patient_phone }, 
             "Patient phone fetched"
         ));
+    });
+
+
+    getPatientDetailsByRef = asyncHandler(async (req, res) => {
+        const { booking_reference } = req.params;
+        if (!booking_reference) {
+            throw new apiError(400, "Booking reference is required");
+        }
+
+        // join with the hospitals table to get the 'city' so the frontend knows which hospital list to load
+        const query = `
+            SELECT 
+                ob.booking_reference,
+                ob.patient_name,
+                ob.current_disposition,
+                ob.hospital_name,
+                h.city
+            FROM crm.opd_bookings ob
+            LEFT JOIN crm.hospitals h ON ob.hospital_name = h.hospital_name
+            WHERE ob.booking_reference = $1
+        `;
+
+        const result = await pool.query(query, [booking_reference]);
+
+        if (result.rows.length === 0) {
+            throw new apiError(404, "Patient not found with this unique ID.");
+        }
+
+        res.status(200).json(new apiResponse(
+            200, 
+            result.rows[0], 
+            "Patient details fetched successfully"
+        ));
+    });
+
+   
+    updatePatientDisposition = asyncHandler(async (req, res) => {
+        const { booking_reference, new_disposition, hospital_name, comments } = req.body;
+        const userId = req.user.id;
+
+        if (!booking_reference || !new_disposition) {
+            throw new apiError(400, "Booking Reference and New Disposition are required.");
+        }
+
+        const client = await pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // 1. Fetch current state
+            const currentRes = await client.query(
+                "SELECT id, current_disposition, hospital_name FROM opd_bookings WHERE booking_reference = $1",
+                [booking_reference]
+            );
+
+            if (currentRes.rows.length === 0) {
+                throw new apiError(404, "Booking not found.");
+            }
+
+            const { id: opdId, current_disposition: prevDisposition } = currentRes.rows[0];
+
+            // 2. Insert into LOGS table (With new hospital_name field)
+            
+            await client.query(
+                `INSERT INTO opd_dispositions_logs 
+                (opd_booking_id, previous_disposition, new_disposition, notes, hospital_name, updated_by_user_id, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+                [
+                    opdId, 
+                    prevDisposition, 
+                    new_disposition, 
+                    comments || '', // Notes now ONLY contains comments
+                    hospital_name,  // New dedicated field
+                    userId
+                ]
+            );
+
+            // 3. Update MAIN table (Disposition AND Hospital Name)
+            await client.query(
+                `UPDATE opd_bookings 
+                 SET current_disposition = $1, 
+                     hospital_name = COALESCE($2, hospital_name), 
+                     updated_at = NOW()
+                 WHERE id = $3`,
+                [new_disposition, hospital_name, opdId]
+            );
+
+            await client.query('COMMIT');
+
+            // Audit Log
+            logAudit(userId, 'DISPOSITION_UPDATE', 'opd_booking', opdId, {
+                old_status: prevDisposition,
+                new_status: new_disposition,
+                new_hospital: hospital_name
+            });
+
+            res.status(200).json(new apiResponse(200, {}, "Disposition and Hospital updated successfully."));
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
     });
 }

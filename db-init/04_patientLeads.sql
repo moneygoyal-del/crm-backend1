@@ -64,6 +64,7 @@ CREATE TABLE opd_dispositions_logs (
     opd_booking_id UUID REFERENCES opd_bookings(id),
     previous_disposition VARCHAR(50),
     new_disposition VARCHAR(50) NOT NULL,
+    hospital_name VARCHAR(300),
     disposition_reason TEXT,
     updated_by_user_id UUID REFERENCES users(id),
     scheduled_follow_up TIMESTAMP,

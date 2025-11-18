@@ -5,7 +5,7 @@ import LoginPage from "./Pages/LoginPage";
 import BookOpdPage from "./Pages/BookOpdPage"; 
 import LogMeetingPage from "./Pages/LogMeetingPage"; 
 import UpdatePhonePage from "./Pages/UpdatePhonePage";
-
+import PatientDispositionUpdate from "./Pages/PatientDispositionUpdate"; // Import the new page
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('authToken');
@@ -33,6 +33,13 @@ function App() {
           path="/update-patient-phone" 
           element={<ProtectedRoute><UpdatePhonePage /></ProtectedRoute>} 
         />
+        
+       
+        <Route 
+          path="/update-disposition" 
+          element={<ProtectedRoute><PatientDispositionUpdate /></ProtectedRoute>} 
+        />
+
         <Route path="/login" element={<LoginPage />} />
       </Routes>
     </BrowserRouter>
