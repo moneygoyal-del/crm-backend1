@@ -873,7 +873,6 @@ export default class patientLeadController {
             "Patient details fetched successfully"
         ));
     });
-
    
     updatePatientDisposition = asyncHandler(async (req, res) => {
         const { booking_reference, new_disposition, hospital_name, comments } = req.body;
@@ -889,6 +888,7 @@ export default class patientLeadController {
             await client.query('BEGIN');
 
             // 1. Fetch current state
+            // We need 'hospital_name' here so we can send it to the sheet if the user didn't change it
             const currentRes = await client.query(
                 "SELECT id, current_disposition, hospital_name FROM opd_bookings WHERE booking_reference = $1",
                 [booking_reference]
@@ -898,10 +898,9 @@ export default class patientLeadController {
                 throw new apiError(404, "Booking not found.");
             }
 
-            const { id: opdId, current_disposition: prevDisposition } = currentRes.rows[0];
+            const { id: opdId, current_disposition: prevDisposition, hospital_name: currentHospital } = currentRes.rows[0];
 
-            // 2. Insert into LOGS table (With new hospital_name field)
-            
+            // 2. Insert into DB LOGS table
             await client.query(
                 `INSERT INTO opd_dispositions_logs 
                 (opd_booking_id, previous_disposition, new_disposition, notes, hospital_name, updated_by_user_id, created_at)
@@ -910,8 +909,8 @@ export default class patientLeadController {
                     opdId, 
                     prevDisposition, 
                     new_disposition, 
-                    comments || '', // Notes now ONLY contains comments
-                    hospital_name,  // New dedicated field
+                    comments || '', 
+                    hospital_name, // Stores new hospital (or null if not changed) in logs 
                     userId
                 ]
             );
@@ -928,14 +927,36 @@ export default class patientLeadController {
 
             await client.query('COMMIT');
 
+            // --- 4. SHEET QUEUE SYNC ---
+            // Determine the final hospital name for the sheet row
+            const finalHospital = hospital_name || currentHospital;
+            
+            const now = new Date();
+            const monthName = now.toLocaleString('default', { month: 'long' });
+            
+            // Row structure: [Unique Code, Hospital Name, Initial Disposition, Next Disposition, Comments, Timestamp, Month]
+            const sheetRow = [
+                booking_reference,
+                finalHospital,
+                prevDisposition || "N/A",
+                new_disposition,
+                comments || "",
+                now.toISOString(),
+                monthName
+            ];
+
+            // Push to the existing queue system
+            await addToSheetQueue("LOG_DISPOSITION_UPDATE", sheetRow);
+            // ----------------------------
+
             // Audit Log
             logAudit(userId, 'DISPOSITION_UPDATE', 'opd_booking', opdId, {
                 old_status: prevDisposition,
                 new_status: new_disposition,
-                new_hospital: hospital_name
+                hospital: finalHospital
             });
 
-            res.status(200).json(new apiResponse(200, {}, "Disposition and Hospital updated successfully."));
+            res.status(200).json(new apiResponse(200, {}, "Disposition updated successfully."));
 
         } catch (error) {
             await client.query('ROLLBACK');
