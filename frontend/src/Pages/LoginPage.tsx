@@ -67,13 +67,12 @@ export default function LoginPage() {
     try {
       const response = await api.post(`/auth/verify-otp`, { phone, otp });
       
-      // --- UPDATED FOR REFRESH TOKEN APPROACH ---
       const { accessToken, refreshToken, accessTokenExpiresAt, user } = response.data.data;
 
       // Store tokens and user details
-      localStorage.setItem("authToken", accessToken); // The short-lived access token
-      localStorage.setItem("refreshToken", refreshToken); // The long-lived refresh token
-      localStorage.setItem("authTokenExpiry", accessTokenExpiresAt); // For proactive checks
+      localStorage.setItem("authToken", accessToken); 
+      localStorage.setItem("refreshToken", refreshToken); 
+      localStorage.setItem("authTokenExpiry", accessTokenExpiresAt); 
       localStorage.setItem("user", JSON.stringify(user));
 
       setSuccess("Login successful!");
@@ -99,13 +98,9 @@ export default function LoginPage() {
       
       {/* 1. Left "Brand" Column (Shows on desktop, hidden on mobile) */}
       <div className="hidden md:flex md:w-1/2 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-8 flex-col justify-center items-center text-center">
-        <div className="w-24 h-24 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full flex items-center justify-center shadow-lg mb-6">
-          <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-          </svg>
-        </div>
-        <h1 className="text-5xl font-bold text-white mb-3">Medpho</h1>
-        <p className="text-2xl text-gray-300">Healthcare Operations Portal</p>
+        {/* Logo Removed */}
+        <h1 className="text-6xl font-bold text-white mb-3 tracking-tight">Medpho CRM</h1>
+        
       </div>
 
       {/* 2. Right "Form" Column (Takes full width on mobile) */}
@@ -117,12 +112,8 @@ export default function LoginPage() {
         >
           <div className="bg-gray-800 rounded-2xl md:shadow-2xl md:overflow-hidden md:border md:border-gray-700">
             {/* Header (Shows on mobile, hidden on desktop) */}
-            <div className="md:hidden bg-gradient-to-r from-cyan-500 to-blue-500 px-6 py-8 text-center rounded-t-2xl">
-              <div className="w-16 h-16 bg-white rounded-full mx-auto mb-4 flex items-center justify-center">
-                <svg className="w-10 h-10 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              </div>
+            <div className="md:hidden bg-gradient-to-r from-cyan-500 to-blue-500 px-6 py-10 text-center rounded-t-2xl">
+               {/* Logo Removed */}
               <h2 className="text-3xl font-bold text-white">Medpho CRM</h2>
               <p className="text-cyan-100 mt-2">Healthcare Operations Portal</p>
             </div>
