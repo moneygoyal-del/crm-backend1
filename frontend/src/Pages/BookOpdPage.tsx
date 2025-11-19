@@ -26,7 +26,7 @@ export default function BookOpdPage() {
     patient_phone: "",
     referee_name: "",
     refree_phone_no: "",
-    hospital_name: "",
+    hospital_name: [] as string[], // CHANGED: Now an array for multiple selection
     medical_condition: "",
     city: "",
     age: "",
@@ -107,9 +107,22 @@ export default function BookOpdPage() {
     setFormData((prev) => {
       const newState = { ...prev, [name]: value };
       if (name === "city") {
-        newState.hospital_name = "";
+        newState.hospital_name = []; // Reset hospitals when city changes
       }
       return newState;
+    });
+  };
+
+  // --- NEW: Handler for Multiple Hospital Selection ---
+  const handleHospitalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { value, checked } = e.target;
+    setFormData((prev) => {
+      const currentHospitals = prev.hospital_name;
+      if (checked) {
+        return { ...prev, hospital_name: [...currentHospitals, value] };
+      } else {
+        return { ...prev, hospital_name: currentHospitals.filter((h) => h !== value) };
+      }
     });
   };
 
@@ -167,130 +180,131 @@ export default function BookOpdPage() {
     }
   };
   
-  // --- 12. REMOVED uploadFileToDrive helper function ---
+  // --- 13. Form submit handler (MODIFIED to use FormData) ---
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
 
-// --- 13. Form submit handler (MODIFIED to use FormData) ---
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError("");
-  setSuccess("");
-
-  // --- Basic field validation ---
-  if (
-    !formData.patient_name ||
-    !formData.patient_phone ||
-    !formData.refree_phone_no ||
-    !formData.hospital_name ||
-    !formData.medical_condition ||
-    !formData.appointment_date ||
-    !formData.appointment_time ||
-    !formData.city
-  ) {
-    setError("Please fill in all required (*) fields.");
-    return;
-  }
-
-  // --- MANDATORY AADHAR CHECK ---
-  if (!aadharFile) {
-    setError("Aadhar Card Photo is a mandatory field.");
-    return;
-  }
-
-  // --- Start loading ---
-  setLoading(true);
-
-  try {
-    // --- 1. Create FormData and append all data ---
-    const submissionFormData = new FormData();
-    
-    // Append all text data
-    Object.keys(formData).forEach(key => {
-      // --- THIS IS THE FIX ---
-      // We cast the key to keyof typeof formData
-      const typedKey = key as keyof typeof formData;
-      submissionFormData.append(key, formData[typedKey]);
-      // --- END OF FIX ---
-    });
-    
-    // Append files
-    if (aadharFile) { // Check if aadharFile is not null before appending
-      submissionFormData.append('aadhar_document', aadharFile); // Use the key name from backend route
-    }
-    if (pmjayFile) {
-      submissionFormData.append('pmjay_document', pmjayFile); // Use the key name from backend route
+    // --- Basic field validation ---
+    if (
+      !formData.patient_name ||
+      !formData.patient_phone ||
+      !formData.refree_phone_no ||
+      formData.hospital_name.length === 0 || // CHANGED: Check array length
+      !formData.medical_condition ||
+      !formData.appointment_date ||
+      !formData.appointment_time ||
+      !formData.city
+    ) {
+      setError("Please fill in all required (*) fields.");
+      return;
     }
 
-    // --- 2. Submit main form (text + files) in ONE request ---
-    const res = await api.post(
-      "/patientLeads/create-web", 
-      submissionFormData, 
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+    // --- MANDATORY AADHAR CHECK ---
+    if (!aadharFile) {
+      setError("Aadhar Card Photo is a mandatory field.");
+      return;
+    }
+
+    // --- Start loading ---
+    setLoading(true);
+
+    try {
+      // --- 1. Create FormData and append all data ---
+      const submissionFormData = new FormData();
+      
+      // Append all text data
+      Object.keys(formData).forEach(key => {
+        const typedKey = key as keyof typeof formData;
+        
+        // CHANGED: Join hospital array into a comma-separated string
+        if (typedKey === 'hospital_name') {
+             submissionFormData.append(key, formData.hospital_name.join(', '));
+        } else {
+             submissionFormData.append(key, formData[typedKey] as string);
+        }
+      });
+      
+      // Append files
+      if (aadharFile) { 
+        submissionFormData.append('aadhar_document', aadharFile); 
       }
-    );
-    
-    setSuccess(
-      `✅ Booking ${res.data.data.booking_reference} created successfully.`
-    );
+      if (pmjayFile) {
+        submissionFormData.append('pmjay_document', pmjayFile); 
+      }
 
-    setTimeout(() => setSuccess(""), 5000);
+      // --- 2. Submit main form (text + files) in ONE request ---
+      const res = await api.post(
+        "/patientLeads/create-web", 
+        submissionFormData, 
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
+      
+      setSuccess(
+        `✅ Booking ${res.data.data.booking_reference} created successfully.`
+      );
 
-    // --- 3. Reset entire form ---
-    setFormData({
-      booking_reference: generateLeadId(),
-      patient_name: "",
-      patient_phone: "",
-      referee_name: "",
-      refree_phone_no: "",
-      hospital_name: "",
-      medical_condition: "",
-      city: "",
-      age: "",
-      gender: "",
-      panel: "",
-      appointment_date: getTodayDate(),
-      appointment_time: getCurrentTime(),
-      current_disposition: "opd_booked",
-    });
-    setHospitals([]);
-    
-    // Reset file state
-    setAadharFile(null);
-    setPmjayFile(null);
+      setTimeout(() => setSuccess(""), 5000);
 
-    // Reset file input elements
-    const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
-    if (aadharInput) aadharInput.value = "";
-    const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
-    if (pmjayInput) pmjayInput.value = "";
-    
-  } catch (err: unknown) {
-    // Handle errors from the form submission
-    if (axios.isAxiosError(err)) {
-      if (err.response?.data?.message?.includes("duplicate key")) {
-        setError(
-          "A booking with this ID already exists. Please submit again."
-        );
-        setFormData((prev) => ({
-          ...prev,
-          booking_reference: generateLeadId(),
-        }));
+      // --- 3. Reset entire form ---
+      setFormData({
+        booking_reference: generateLeadId(),
+        patient_name: "",
+        patient_phone: "",
+        referee_name: "",
+        refree_phone_no: "",
+        hospital_name: [], // CHANGED: Reset to empty array
+        medical_condition: "",
+        city: "",
+        age: "",
+        gender: "",
+        panel: "",
+        appointment_date: getTodayDate(),
+        appointment_time: getCurrentTime(),
+        current_disposition: "opd_booked",
+      });
+      setHospitals([]);
+      
+      // Reset file state
+      setAadharFile(null);
+      setPmjayFile(null);
+
+      // Reset file input elements
+      const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
+      if (aadharInput) aadharInput.value = "";
+      const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
+      if (pmjayInput) pmjayInput.value = "";
+      
+    } catch (err: unknown) {
+      // Handle errors from the form submission
+      if (axios.isAxiosError(err)) {
+        if (err.response?.data?.message?.includes("duplicate key")) {
+          setError(
+            "A booking with this ID already exists. Please submit again."
+          );
+          setFormData((prev) => ({
+            ...prev,
+            booking_reference: generateLeadId(),
+          }));
+        } else {
+          setError(err.response?.data?.message || "An error occurred.");
+        }
       } else {
-        setError(err.response?.data?.message || "An error occurred.");
+        console.error("Non-Axios error during submit:", err);
+        setError("Unexpected error occurred.");
       }
-    } else {
-      console.error("Non-Axios error during submit:", err);
-      setError("Unexpected error occurred.");
+    } finally {
+      // --- Stop loading ---
+      setLoading(false);
     }
-  } finally {
-    // --- Stop loading ---
-    setLoading(false);
-  }
-};
+  };
 
-  // --- 14. JSX (No changes needed from previous step) ---
+  // --- 14. JSX ---
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       {/* Header */}
@@ -479,7 +493,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                   </select>
                 </div>
 
-                {/* --- UPDATED AADHAR INPUT --- */}
+                {/* --- AADHAR INPUT --- */}
                 <div className="md:col-span-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Aadhar Card Photo <span className="text-red-400">*</span>
@@ -514,7 +528,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                   )}
                 </div>
 
-                {/* --- UPDATED PMJAY INPUT --- */}
+                {/* --- PMJAY INPUT --- */}
                 <div className="md:col-span-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     PMJAY Card Photo
@@ -548,7 +562,6 @@ const handleSubmit = async (e: React.FormEvent) => {
                     </div>
                   )}
                 </div>
-                {/* --- END UPDATED FILE INPUTS --- */}
 
               </div>
             </div>
@@ -594,34 +607,45 @@ const handleSubmit = async (e: React.FormEvent) => {
                   </select>
                 </div>
 
-                <div>
+                {/* --- NEW HOSPITAL MULTI-SELECT --- */}
+                <div className="md:col-span-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Hospital Name <span className="text-red-400">*</span>
+                    Select Hospitals <span className="text-red-400">*</span>
                   </label>
-                  <select
-                    name="hospital_name"
-                    value={formData.hospital_name}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                    disabled={!formData.city || isHospitalLoading || loading}
-                    required
-                  >
-                    <option value="">
-                      {isHospitalLoading
-                        ? "Loading..."
-                        : formData.city
-                        ? "Select hospital..."
-                        : "Select city first"}
-                    </option>
-                    {hospitals.map((hospital) => (
-                      <option key={hospital} value={hospital}>
-                        {hospital}
-                      </option>
-                    ))}
-                  </select>
+                  
+                  {!formData.city && <p className="text-gray-500 text-sm">Please select a city first.</p>}
+                  {formData.city && isHospitalLoading && <p className="text-yellow-500 text-sm">Loading hospitals...</p>}
+                  
+                  {formData.city && !isHospitalLoading && hospitals.length > 0 && (
+                    <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto p-3 bg-gray-700 border border-gray-600 rounded-lg">
+                      {hospitals.map((hospital) => (
+                        <label key={hospital} className="flex items-center space-x-2 cursor-pointer hover:bg-gray-600 p-1 rounded">
+                          <input
+                            type="checkbox"
+                            value={hospital}
+                            checked={formData.hospital_name.includes(hospital)}
+                            onChange={handleHospitalChange}
+                            className="w-4 h-4 text-blue-600 bg-gray-800 border-gray-500 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-white">{hospital}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {formData.city && !isHospitalLoading && hospitals.length === 0 && (
+                     <p className="text-red-400 text-sm">No hospitals found in this city.</p>
+                  )}
+                  
+                  {formData.hospital_name.length > 0 && (
+                    <p className="text-xs text-green-400 mt-1 truncate">
+                      Selected: {formData.hospital_name.join(", ")}
+                    </p>
+                  )}
                 </div>
+               
 
-                {/* --- MODIFIED FIELDS FOR DOCTOR LOOKUP --- */}
+                {/* --- DOCTOR LOOKUP --- */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Referee Doctor's Phone{" "}
@@ -658,8 +682,6 @@ const handleSubmit = async (e: React.FormEvent) => {
                     disabled={loading}
                   />
                 </div>
-                {/* --- END MODIFIED FIELDS --- */}
-
 
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
