@@ -876,9 +876,9 @@ export default class patientLeadController {
         try {
             await client.query('BEGIN');
 
-            
+            // 1. Fetch current state
             const currentRes = await client.query(
-                "SELECT id, current_disposition, hospital_name FROM opd_bookings WHERE booking_reference = $1",
+                "SELECT id, current_disposition FROM opd_bookings WHERE booking_reference = $1",
                 [booking_reference]
             );
 
@@ -886,10 +886,9 @@ export default class patientLeadController {
                 throw new apiError(404, "Booking not found.");
             }
 
-            
             const { id: opdId, current_disposition: prevDisposition } = currentRes.rows[0];
 
-           
+            // 2. Insert into DB LOGS table
             await client.query(
                 `INSERT INTO opd_dispositions_logs 
                 (opd_booking_id, previous_disposition, new_disposition, notes, hospital_name, updated_by_user_id, created_at)
@@ -904,13 +903,15 @@ export default class patientLeadController {
                 ]
             );
 
-       
+            // 3. Update MAIN table (Disposition AND Hospital Name)
+           
             await client.query(
                 `UPDATE opd_bookings 
                  SET current_disposition = $1, 
+                     hospital_name = COALESCE($2, hospital_name), 
                      updated_at = NOW()
-                 WHERE id = $2`,
-                [new_disposition, opdId]
+                 WHERE id = $3`,
+                [new_disposition, hospital_name, opdId]
             );
 
             await client.query('COMMIT');
@@ -919,7 +920,7 @@ export default class patientLeadController {
             const now = new Date();
             const monthName = now.toLocaleString('default', { month: 'long' });
             
-            
+            // Send the SELECTED hospital to the sheet log
             const sheetRow = [
                 booking_reference,
                 hospital_name || "N/A", 
@@ -936,10 +937,10 @@ export default class patientLeadController {
             logAudit(userId, 'DISPOSITION_UPDATE', 'opd_booking', opdId, {
                 old_status: prevDisposition,
                 new_status: new_disposition,
-                hospital_outcome: hospital_name
+                hospital_updated_to: hospital_name
             });
 
-            res.status(200).json(new apiResponse(200, {}, "Disposition updated successfully."));
+            res.status(200).json(new apiResponse(200, {}, "Disposition and Hospital updated successfully."));
 
         } catch (error) {
             await client.query('ROLLBACK');
