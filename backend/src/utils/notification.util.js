@@ -5,6 +5,8 @@ import https from 'https';
 
 
 const sendUltraMsg = async (to, body) => {
+    if (!to) return; // Safety check
+    
     const url = `https://api.ultramsg.com/${process.env.ULTRAMSG_INSTANCE}/messages/chat`;
     const params = new URLSearchParams();
     params.append('token', process.env.ULTRAMSG_TOKEN);
@@ -143,20 +145,47 @@ export const sendOpdNotifications = async (patientData) => {
     }
 
     // --- Notification 2: Hospital(s) (UltraMsg) ---
-    const hospitalGroupId = await getHospitalGroupId(patientData.hospital_name);
-    if (hospitalGroupId) {
-        const hospitalMessage = `*Dear ${patientData.hospital_name} Management,*\nWe have a new prospective patient, details are as under:\n\n` +
-                              `*Name:* ${patientData.patient_name}\n` +
-                              `*Patient Age:* ${patientData.age} years\n` +
-                              `*Gender:* ${patientData.gender}\n` +
-                              `*Medical Issue:* ${patientData.medical_condition}\n` +
-                              `*Panel:* ${patientData.panel}\n` +
-                              `*Patient Code:* ${patientData.booking_reference}\n\n` +
-                              `*Regards*\n*Operations, Medpho*`;
-        notificationPromises.push(
-            sendUltraMsg(hospitalGroupId, hospitalMessage)
-        );
+    
+    // 1. Get list of hospitals using IDs array
+    let targetHospitals = [];
+    const ids = patientData.hospital_ids; // Already an array
+
+    if (ids && ids.length > 0) {
+        try {
+            // Fetch hospital group IDs using "ANY" operator for array
+            const query = `
+                SELECT hospital_name, hospital_group_id 
+                FROM crm.hospitals 
+                WHERE id = ANY($1::uuid[])
+            `;
+            
+            const res = await pool.query(query, [ids]);
+            targetHospitals = res.rows;
+
+        } catch (e) {
+            console.error("Error fetching hospital groups:", e.message);
+        }
     }
+
+    // 2. Send message to EACH hospital group found
+    targetHospitals.forEach(h => {
+        if (h.hospital_group_id) {
+            const hospitalMessage = `*Dear ${h.hospital_name} Management,*\nWe have a new prospective patient, details are as under:\n\n` +
+                                  `*Name:* ${patientData.patient_name}\n` +
+                                  `*Patient Age:* ${patientData.age} years\n` +
+                                  `*Gender:* ${patientData.gender}\n` +
+                                  `*Medical Issue:* ${patientData.medical_condition}\n` +
+                                  `*Panel:* ${patientData.panel}\n` +
+                                  `*Patient Code:* ${patientData.booking_reference}\n\n` +
+                                  `*Regards*\n*Operations, Medpho*`;
+            
+            notificationPromises.push(
+                sendUltraMsg(h.hospital_group_id, hospitalMessage)
+            );
+        } else {
+            console.warn(`No hospital_group_id for: ${h.hospital_name}`);
+        }
+    });
 
     // --- Notification 3: NDM/Agent (UltraMsg) ---
     const ndmMessage = `*Dear Medphoite,*\nYour lead is successfully posted to Medpho, and shared with respective hospitals, details are as under:\n\n` +
@@ -270,4 +299,40 @@ export const sendDoctorMeetingNotification = async (doctorName, ndManagerName, d
         console.error(`Failed to send AiSensy to ${doctorPhoneNumber}:`, error.response?.data || error.message);
     }
 
+};
+
+/**
+ * Sends WhatsApp notifications to NDM and Referee when a patient's disposition is updated.
+ * @param {Object} data - The data object containing patient, ndm, and referee details.
+ */
+export const sendDispositionUpdateNotifications = async (data) => {
+    console.log(`Sending disposition update notifications for: ${data.uniqueCode}`);
+
+    const promises = [];
+
+    // 1. Notify NDM (Logged-in User / Agent)
+    if (data.ndmContact) {
+        const ndmMessage = `*Dear Medphoite,*\nThe disposition of your lead is updated, details are as under:\n\n` +
+            `*Patient Unique Code:* ${data.uniqueCode}\n` +
+            `*Name:* ${data.name}\n` +
+            `*Disposition:* ${data.disposition}\n` +
+            `*Panel:* ${data.panel || 'N/A'}\n\n` +
+            `*Regards*\n*Operations, Medpho*`;
+        
+        promises.push(sendUltraMsg(data.ndmContact, ndmMessage));
+    }
+
+    // 2. Notify Referee (Doctor)
+    if (data.refereeContactNumber && data.refereeName) {
+        const refereeMessage = `*Dear ${data.refereeName},*\nThe disposition of your referee patient is updated, details are as under:\n\n` +
+            `*Patient Unique Code:* ${data.uniqueCode}\n` +
+            `*Name:* ${data.name}\n` +
+            `*Disposition:* ${data.disposition}\n` +
+            `*Panel:* ${data.panel || 'N/A'}\n\n` +
+            `*Regards*\n*Operations, Medpho*`;
+        
+        promises.push(sendUltraMsg(data.refereeContactNumber, refereeMessage));
+    }
+
+    await Promise.allSettled(promises);
 };
