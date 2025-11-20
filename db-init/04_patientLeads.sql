@@ -36,7 +36,7 @@ CREATE TABLE opd_bookings (
     age INTEGER,
     gender VARCHAR(10),
     medical_condition TEXT NOT NULL,
-    hospital_name VARCHAR(300) NOT NULL,
+    hospital_name TEXT NOT NULL,
     department VARCHAR(100),
     appointment_date DATE ,
     appointment_time TIME ,

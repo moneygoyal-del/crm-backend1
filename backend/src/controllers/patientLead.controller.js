@@ -586,7 +586,7 @@ export default class patientLeadController {
         let {
             id, booking_reference, patient_name, patient_phone, age: _age,
             gender, medical_condition, hospital_name, tentative_visit_date,
-            current_disposition, panel // 'panel' maps to 'payment_mode'
+            current_disposition, panel 
         } = req.body;
 
         if (!id && !booking_reference) {
@@ -677,7 +677,7 @@ export default class patientLeadController {
             SET ${updateFields.join(', ')} 
             WHERE ${whereClause}
             RETURNING *
-        `; // Return all fields
+        `; 
 
         const updatedResult = await pool.query(updateQuery, queryParams);
 
@@ -694,13 +694,12 @@ export default class patientLeadController {
                 'opd_booking',
                 updatedRow.id,
                 {
-                    changedFields: updateFields, // e.g., ["status", "phone"]
+                    changedFields: updateFields, 
                     bookingRef: updatedRow.booking_reference
                 }
             );
         }
         
-        // --- RESPOND TO CLIENT FIRST ---
         res.status(200).json(new apiResponse(200, {
              id: updatedRow.id,
              booking_reference: updatedRow.booking_reference,
@@ -708,29 +707,26 @@ export default class patientLeadController {
              updated_at: updatedRow.updated_at
         }, "OPD booking successfully updated"));
         
-        // --- RUN BACKGROUND TASKS ---
         const runBackgroundTasks = async () => {
             try {
                 const new_phone_updated = updatedRow.patient_phone;
                 
                 if (patient_phone && old_patient_phone && new_phone_updated !== old_patient_phone) {
                     
-                    // --- Task A: Queue Google Sheet Update ---
                     console.log(`Queueing phone number update for sheet: ${updatedRow.booking_reference}`);
                     await addToSheetQueue("UPDATE_PATIENT_PHONE", {
                         booking_reference: updatedRow.booking_reference,
                         new_phone: new_phone_updated
                     });
 
-                    // --- Task B: Re-send *Patient Only* Notification ---
                     console.log(`Triggering Patient-Only notification for phone update: ${updatedRow.booking_reference}`);
                     
                     const qrPatientData = {
                         name: updatedRow.patient_name,
                         age: updatedRow.age || "N/A",
                         gender: updatedRow.gender || "N/A",
-                        credits: "0", // Not on opd_bookings, default to 0
-                        phoneNumber: updatedRow.patient_phone, // The NEW phone
+                        credits: "0", 
+                        phoneNumber: updatedRow.patient_phone, 
                         uniqueCode: updatedRow.booking_reference,
                         timestamp: new Date().toISOString()
                     };
@@ -739,9 +735,9 @@ export default class patientLeadController {
 
                     if (qrCodeUrl) {
                         await sendAiSensy(
-                            updatedRow.patient_phone,  // to
-                            updatedRow.patient_name,   // name
-                            qrCodeUrl                  // mediaUrl
+                            updatedRow.patient_phone,  
+                            updatedRow.patient_name,   
+                            qrCodeUrl                  
                         );
                         console.log(`Patient notification re-sent to new number: ${updatedRow.patient_phone}`);
                     } else {
@@ -797,21 +793,17 @@ export default class patientLeadController {
         }
 
         try {
-            // 1. Upload the file from its temporary path to Google Drive
             const links = await uploadAndGetLink(file.path, file.mimetype);
             
-            // 2. Delete the temporary file from the server
             await fs.unlink(file.path);
 
-            // 3. Return the Google Drive link to the frontend
             res.status(200).json(new apiResponse(
                 200, 
-                { url: links.directLink }, // Send the direct download link
+                { url: links.directLink }, 
                 "Document uploaded successfully"
             ));
 
         } catch (uploadError) {
-            // If upload fails, still try to delete the temp file
             try { await fs.unlink(file.path); } catch (e) { /* ignore */ }
             
             console.error("Google Drive Upload Error:", uploadError);
@@ -841,24 +833,21 @@ export default class patientLeadController {
         ));
     });
 
-
     getPatientDetailsByRef = asyncHandler(async (req, res) => {
         const { booking_reference } = req.params;
         if (!booking_reference) {
             throw new apiError(400, "Booking reference is required");
         }
 
-        // join with the hospitals table to get the 'city' so the frontend knows which hospital list to load
+
         const query = `
             SELECT 
-                ob.booking_reference,
-                ob.patient_name,
-                ob.current_disposition,
-                ob.hospital_name,
-                h.city
-            FROM crm.opd_bookings ob
-            LEFT JOIN crm.hospitals h ON ob.hospital_name = h.hospital_name
-            WHERE ob.booking_reference = $1
+                booking_reference,
+                patient_name,
+                current_disposition,
+                hospital_name -- This will now contain "Hosp A, Hosp B"
+            FROM crm.opd_bookings
+            WHERE booking_reference = $1
         `;
 
         const result = await pool.query(query, [booking_reference]);
@@ -888,9 +877,8 @@ export default class patientLeadController {
             await client.query('BEGIN');
 
             // 1. Fetch current state
-            // We need 'hospital_name' here so we can send it to the sheet if the user didn't change it
             const currentRes = await client.query(
-                "SELECT id, current_disposition, hospital_name FROM opd_bookings WHERE booking_reference = $1",
+                "SELECT id, current_disposition FROM opd_bookings WHERE booking_reference = $1",
                 [booking_reference]
             );
 
@@ -898,7 +886,7 @@ export default class patientLeadController {
                 throw new apiError(404, "Booking not found.");
             }
 
-            const { id: opdId, current_disposition: prevDisposition, hospital_name: currentHospital } = currentRes.rows[0];
+            const { id: opdId, current_disposition: prevDisposition } = currentRes.rows[0];
 
             // 2. Insert into DB LOGS table
             await client.query(
@@ -910,12 +898,13 @@ export default class patientLeadController {
                     prevDisposition, 
                     new_disposition, 
                     comments || '', 
-                    hospital_name, // Stores new hospital (or null if not changed) in logs 
+                    hospital_name, 
                     userId
                 ]
             );
 
             // 3. Update MAIN table (Disposition AND Hospital Name)
+           
             await client.query(
                 `UPDATE opd_bookings 
                  SET current_disposition = $1, 
@@ -928,16 +917,13 @@ export default class patientLeadController {
             await client.query('COMMIT');
 
             // --- 4. SHEET QUEUE SYNC ---
-            // Determine the final hospital name for the sheet row
-            const finalHospital = hospital_name || currentHospital;
-            
             const now = new Date();
             const monthName = now.toLocaleString('default', { month: 'long' });
             
-            // Row structure: [Unique Code, Hospital Name, Initial Disposition, Next Disposition, Comments, Timestamp, Month]
+            // Send the SELECTED hospital to the sheet log
             const sheetRow = [
                 booking_reference,
-                finalHospital,
+                hospital_name || "N/A", 
                 prevDisposition || "N/A",
                 new_disposition,
                 comments || "",
@@ -945,18 +931,16 @@ export default class patientLeadController {
                 monthName
             ];
 
-            // Push to the existing queue system
             await addToSheetQueue("LOG_DISPOSITION_UPDATE", sheetRow);
-            // ----------------------------
 
             // Audit Log
             logAudit(userId, 'DISPOSITION_UPDATE', 'opd_booking', opdId, {
                 old_status: prevDisposition,
                 new_status: new_disposition,
-                hospital: finalHospital
+                hospital_updated_to: hospital_name
             });
 
-            res.status(200).json(new apiResponse(200, {}, "Disposition updated successfully."));
+            res.status(200).json(new apiResponse(200, {}, "Disposition and Hospital updated successfully."));
 
         } catch (error) {
             await client.query('ROLLBACK');

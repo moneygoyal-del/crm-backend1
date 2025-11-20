@@ -35,8 +35,7 @@ export default function PatientDispositionUpdate() {
   const [patientDetails, setPatientDetails] = useState({
     patient_name: "",
     current_disposition: "",
-    hospital_name: "",
-    city: ""
+    hospital_name: "", // This will display the full comma-separated list
   });
 
   // Form Data for Update
@@ -46,8 +45,7 @@ export default function PatientDispositionUpdate() {
   
   // Lists
   const [hospitalsList, setHospitalsList] = useState<string[]>([]);
-  const [isHospitalsLoading, setIsHospitalsLoading] = useState(false);
-
+  
   // --- 1. Fetch Patient Details ---
   const handleFetchPatient = async () => {
     if (!bookingRef) {
@@ -58,7 +56,8 @@ export default function PatientDispositionUpdate() {
     setError("");
     setSuccess("");
     setIsFetched(false);
-    
+    setHospitalsList([]); 
+
     try {
       const res = await api.get(`/patientLeads/get-details/${bookingRef}`);
       const data = res.data.data;
@@ -66,22 +65,25 @@ export default function PatientDispositionUpdate() {
       setPatientDetails({
         patient_name: data.patient_name,
         current_disposition: data.current_disposition || "N/A",
-        hospital_name: data.hospital_name,
-        city: data.city
+        hospital_name: data.hospital_name || "N/A"
       });
-      
-      // Pre-fill form with current data
-      setSelectedHospital(data.hospital_name);
-      // Don't auto-select disposition so user is forced to choose the NEW one, or set to empty
+
+      // --- MODIFICATION: Parse the comma-separated hospitals ---
+      // Assuming data.hospital_name is "Hospital A, Hospital B"
+      if (data.hospital_name) {
+          const hospitals = data.hospital_name.split(',').map((h: string) => h.trim());
+          setHospitalsList(hospitals);
+          
+          // Pre-select the first one by default if available
+          if (hospitals.length > 0) {
+              setSelectedHospital(hospitals[0]);
+          }
+      }
+
       setNewDisposition(""); 
       
       setIsFetched(true);
       setSuccess("Patient details fetched.");
-
-      // Immediately fetch hospitals for this city
-      if (data.city) {
-        fetchHospitalsForCity(data.city);
-      }
 
     } catch (err) {
       if (axios.isAxiosError(err)) {
@@ -94,20 +96,7 @@ export default function PatientDispositionUpdate() {
     }
   };
 
-  // --- 2. Fetch Hospitals based on City ---
-  const fetchHospitalsForCity = async (city: string) => {
-    setIsHospitalsLoading(true);
-    try {
-      const res = await api.get(`/hospitals/by-city/${city}`);
-      setHospitalsList(res.data.data || []);
-    } catch (err) {
-      console.error("Failed to fetch hospitals", err);
-    } finally {
-      setIsHospitalsLoading(false);
-    }
-  };
-
-  // --- 3. Submit Update (UPDATED to use new Endpoint) ---
+  // --- 3. Submit Update ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -122,13 +111,12 @@ export default function PatientDispositionUpdate() {
 
     const payload = {
       booking_reference: bookingRef,
-      hospital_name: selectedHospital,
-      new_disposition: newDisposition, // Backend expects 'new_disposition'
+      hospital_name: selectedHospital, // The user selects ONE from the list of booked hospitals
+      new_disposition: newDisposition, 
       comments: comments 
     };
 
     try {
-      // This route now updates the LOGS table specifically
       await api.post("/patientLeads/update-disposition", payload);
       
       setSuccess(`✅ Disposition updated & logged for ${patientDetails.patient_name}`);
@@ -140,7 +128,8 @@ export default function PatientDispositionUpdate() {
           setComments("");
           setNewDisposition("");
           setSuccess("");
-          setPatientDetails({ patient_name: "", current_disposition: "", hospital_name: "", city: "" });
+          setPatientDetails({ patient_name: "", current_disposition: "", hospital_name: "" });
+          setHospitalsList([]);
       }, 3000);
 
     } catch (err) {
@@ -233,30 +222,26 @@ export default function PatientDispositionUpdate() {
                         <span className="block text-xs text-gray-400 uppercase">Current Status</span>
                         <span className="text-white font-medium">{patientDetails.current_disposition}</span>
                     </div>
-                    <div>
-                        <span className="block text-xs text-gray-400 uppercase">Current Hospital</span>
-                        <span className="text-white font-medium">{patientDetails.hospital_name}</span>
-                    </div>
-                     <div>
-                        <span className="block text-xs text-gray-400 uppercase">City</span>
-                        <span className="text-white font-medium">{patientDetails.city || "N/A"}</span>
+                    <div className="md:col-span-2">
+                        <span className="block text-xs text-gray-400 uppercase">Booked Hospitals</span>
+                        <span className="text-white font-medium break-words">{patientDetails.hospital_name}</span>
                     </div>
                 </div>
 
                 <div>
-                  <label className={labelStyles}>Update Hospital ({patientDetails.city})</label>
+                  <label className={labelStyles}>Select Outcome Hospital</label>
                   <select
                     value={selectedHospital}
                     onChange={(e) => setSelectedHospital(e.target.value)}
                     className={inputStyles}
                     disabled={loading}
                   >
-                    <option value="">Select Hospital</option>
-                    {isHospitalsLoading ? (
-                        <option disabled>Loading hospitals...</option>
+                    <option value="" disabled>Select Hospital</option>
+                    {hospitalsList.length === 0 ? (
+                        <option disabled>No hospitals found</option>
                     ) : (
-                        hospitalsList.map((h) => (
-                            <option key={h} value={h}>{h}</option>
+                        hospitalsList.map((h, idx) => (
+                            <option key={idx} value={h}>{h}</option>
                         ))
                     )}
                   </select>
@@ -304,6 +289,7 @@ export default function PatientDispositionUpdate() {
                       setIsFetched(false);
                       setBookingRef("");
                       setComments("");
+                      setHospitalsList([]);
                     }}
                     className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold rounded-lg transition-colors"
                   >
