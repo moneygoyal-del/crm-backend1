@@ -30,13 +30,15 @@ export default class hospitalController {
             throw new apiError(400, "City parameter is required");
         }
 
+        // MODIFIED: Select id AND hospital_name
         const result = await pool.query(
-            "SELECT hospital_name FROM crm.hospitals WHERE city = $1 ORDER BY hospital_name",
+            "SELECT id, hospital_name FROM crm.hospitals WHERE city = $1 ORDER BY hospital_name",
             [city]
         );
 
-        const hospitals = result.rows.map(row => row.hospital_name);
-        res.status(200).json(new apiResponse(200, hospitals, "Hospitals fetched successfully"));
+        // MODIFIED: Return the full row object { id, hospital_name } instead of just mapping names
+        // Do NOT use .map(row => row.hospital_name) here anymore.
+        res.status(200).json(new apiResponse(200, result.rows, "Hospitals fetched successfully"));
     });
 
     /**

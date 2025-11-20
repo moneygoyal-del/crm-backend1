@@ -91,9 +91,10 @@ export default class patientLeadController {
             throw new apiError(401, "User not authenticated");
         }
         
-        // 1. Destructure fields from req.body (files are in req.files)
+        // 1. Destructure fields from req.body
         let {
-            hospital_name, refree_phone_no, referee_name, patient_name, patient_phone,
+            hospital_name, hospital_ids, // <--- NEW FIELD
+            refree_phone_no, referee_name, patient_name, patient_phone,
             city, age: _age, gender, medical_condition, panel,
             booking_reference, appointment_date, appointment_time,
             current_disposition
@@ -102,12 +103,17 @@ export default class patientLeadController {
         // --- Data Processing and Validation ---
         hospital_name = processString(hospital_name);
 
+        // Validate required fields (added hospital_ids check)
         if (!refree_phone_no || !patient_name || !patient_phone || !medical_condition || !hospital_name || !booking_reference || !appointment_date || !appointment_time) {
             throw new apiError(400, "Missing required fields. Check all fields with *.");
         }
 
+        // Ensure hospital_ids is an array (Multer might parse single value as string)
+        const hospitalIdsArray = Array.isArray(hospital_ids) 
+            ? hospital_ids 
+            : (hospital_ids ? [hospital_ids] : []);
+
         const ndm_contact_processed = process_phone_no(loggedInUser.phone);
-        const ndm_name = loggedInUser.first_name;
         
         const patient_phone_processed = process_phone_no(patient_phone);
         const refree_phone_processed = process_phone_no(refree_phone_no);
@@ -132,20 +138,21 @@ export default class patientLeadController {
         const created_by_agent_id = loggedInUser.id;
 
         // --- 2. Database Insertion ---
-        // Insert with NULL for file URLs. We will update them later.
+        // Insert with hospital_ids array
         const newOPD = await pool.query(
             `INSERT INTO opd_bookings (
                 booking_reference, patient_name, patient_phone, age, gender, 
-                medical_condition, hospital_name, appointment_date, appointment_time, 
+                medical_condition, hospital_name, hospital_ids, appointment_date, appointment_time, 
                 current_disposition, aadhar_card_url, pmjay_card_url, created_by_agent_id, last_interaction_date, 
                 source, referee_id, created_at, updated_at, payment_mode
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) 
             RETURNING id, booking_reference, patient_name`,
             [
                 booking_reference, patient_name, patient_phone_processed, age, gender,
-                medical_condition, hospital_name, appointment_date, appointment_time,
-                current_disposition, null, null, created_by_agent_id, last_interaction_date, // Insert NULL for URLs
+                medical_condition, hospital_name, hospitalIdsArray, // <--- Insert JS Array directly
+                appointment_date, appointment_time,
+                current_disposition, null, null, created_by_agent_id, last_interaction_date, 
                 "Doctor referral", referee_id, created_at, created_at, panel
             ]
         );
@@ -154,7 +161,6 @@ export default class patientLeadController {
             throw new apiError(500, "Failed to create new OPD booking.");
         }
 
-        // Get the ID of the row we just created
         const newOpdId = newOPD.rows[0].id;
 
         await logAudit(
@@ -165,29 +171,30 @@ export default class patientLeadController {
             { 
                 patientName: patient_name, 
                 hospital: hospital_name, 
-                refereePhone: refree_phone_no
+                hospitalIds: hospitalIdsArray 
             }
         );
 
-        // --- 3. RESPOND TO CLIENT (FAST) ---
+        // --- 3. RESPOND TO CLIENT ---
         res.status(201).json(new apiResponse(201, newOPD.rows[0], `OPD Booking ${booking_reference} successfully created.`));
 
-        // --- 4. RUN BACKGROUND TASKS SAFELY (RE-ORDERED) ---
+        // --- 4. BACKGROUND TASKS ---
         const runBackgroundTasks = async () => {
             let aadharDriveUrl = null;
             let pmjayDriveUrl = null;
             
             try {
-                // --- Task B (WhatsApp) can run immediately ---
+                // --- Task B (WhatsApp) ---
                 const notificationData = {
                     ...req.body,
+                    hospital_ids: hospitalIdsArray, // Pass the array to notification util
                     booking_reference: newOPD.rows[0].booking_reference,
                     ndm_phone: ndm_contact_processed,
                     referee_phone: refree_phone_processed
                 };
                 await sendOpdNotifications(notificationData);
 
-                // --- Task C: File Uploads (NOW RUNS FIRST) ---
+                // --- Task C: File Uploads ---
                 const aadharFile = req.files?.aadhar_document?.[0];
                 const pmjayFile = req.files?.pmjay_document?.[0];
                 
@@ -195,14 +202,12 @@ export default class patientLeadController {
                     try {
                         const fileExt = path.extname(aadharFile.originalname) || '.jpg';
                         const aadharFileName = `${booking_reference}_aadhar${fileExt}`;
-                        console.log(`Uploading Aadhar for ${newOpdId} as ${aadharFileName}...`);
-                        
                         const links = await uploadAndGetLink(aadharFile.path, aadharFile.mimetype, aadharFileName);
                         aadharDriveUrl = links.directLink;
                     } catch(uploadErr) {
                         console.error(`Aadhar upload failed for ${newOpdId}:`, uploadErr.message);
                     } finally {
-                        await fs.unlink(aadharFile.path); // Always delete temp file
+                        await fs.unlink(aadharFile.path); 
                     }
                 }
                 
@@ -210,20 +215,17 @@ export default class patientLeadController {
                     try {
                         const fileExt = path.extname(pmjayFile.originalname) || '.jpg';
                         const pmjayFileName = `${booking_reference}_pmjay${fileExt}`;
-                        console.log(`Uploading PMJAY for ${newOpdId} as ${pmjayFileName}...`);
-                        
                         const links = await uploadAndGetLink(pmjayFile.path, pmjayFile.mimetype, pmjayFileName);
                         pmjayDriveUrl = links.directLink;
                     } catch(uploadErr) {
                         console.error(`PMJAY upload failed for ${newOpdId}:`, uploadErr.message);
                     } finally {
-                        await fs.unlink(pmjayFile.path); // Always delete temp file
+                        await fs.unlink(pmjayFile.path);
                     }
                 }
 
-                // --- Task D: Update DB with URLs (NOW RUNS SECOND) ---
+                // --- Task D: Update DB with URLs ---
                 if (aadharDriveUrl || pmjayDriveUrl) {
-                    console.log(`Updating DB with file URLs for ${newOpdId}...`);
                     await pool.query(
                         `UPDATE opd_bookings 
                          SET aadhar_card_url = $1, pmjay_card_url = $2, updated_at = NOW()
@@ -232,29 +234,25 @@ export default class patientLeadController {
                     );
                 }
 
-                // --- Task A: Add to Google Sheet Queue (NOW RUNS LAST) ---
-                // Now aadharDriveUrl and pmjayDriveUrl have their final values
+                // --- Task A: Add to Google Sheet Queue ---
                 const sheetRow = [
                     city, hospital_name, ndm_contact_processed, referee_name, 
                     refree_phone_no, patient_name, patient_phone, _age, gender, 
                     medical_condition, panel, 
-                    aadharDriveUrl || "N/A",  // Use the actual URL
-                    pmjayDriveUrl || "N/A",   // Use the actual URL
+                    aadharDriveUrl || "N/A", 
+                    pmjayDriveUrl || "N/A", 
                     null, created_at, booking_reference, 
                     `${appointment_date} ${appointment_time}`, "Doctor referral", 
                     current_disposition, last_interaction_date
                 ];
                 await addToSheetQueue("OPD_BOOKING", sheetRow);
 
-
             } catch (backgroundError) {
                 console.error("--- BACKGROUND TASK FAILED (OPD Booking) ---");
                 console.error(backgroundError.message);
-                console.error("--- This did not stop the user's request. ---");
             }
         };
-
-        // Call the function to run in the background.
+        
         runBackgroundTasks();
     });
     

@@ -11,27 +11,55 @@ const getTodayDate = () => new Date().toISOString().split("T")[0];
 const getCurrentTime = () =>
   new Date().toTimeString().split(" ")[0].substring(0, 5);
 
+// --- Interfaces ---
+interface Hospital {
+  id: string;
+  hospital_name: string;
+}
+
+// Explicitly define the shape of our form data
+interface OpdFormData {
+  booking_reference: string;
+  patient_name: string;
+  patient_phone: string;
+  referee_name: string;
+  refree_phone_no: string;
+  hospital_name: string[]; // For display/search
+  hospital_ids: string[];  // For backend logic (The missing field)
+  medical_condition: string;
+  city: string;
+  age: string;
+  gender: string;
+  panel: string;
+  appointment_date: string;
+  appointment_time: string;
+  current_disposition: string;
+}
+
 export default function BookOpdPage() {
   const navigate = useNavigate();
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // --- 1. State for dropdown lists ---
   const [cities, setCities] = useState<string[]>([]);
-  const [hospitals, setHospitals] = useState<string[]>([]);
+  // Typed as an array of Hospital objects
+  const [hospitals, setHospitals] = useState<Hospital[]>([]); 
   const [isHospitalLoading, setIsHospitalLoading] = useState(false);
 
-  // --- NEW: State for Enhanced Dropdown ---
+  // --- State for Enhanced Dropdown ---
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
   // --- 2. State for the form data ---
-  const [formData, setFormData] = useState({
+  // Initialize with all fields, including hospital_ids
+  const [formData, setFormData] = useState<OpdFormData>({
     booking_reference: generateLeadId(),
     patient_name: "",
     patient_phone: "",
     referee_name: "",
     refree_phone_no: "",
-    hospital_name: [] as string[], // Array for multiple selection
+    hospital_name: [], 
+    hospital_ids: [], // <--- Added to fix the TypeScript error
     medical_condition: "",
     city: "",
     age: "",
@@ -66,7 +94,7 @@ export default function BookOpdPage() {
   // Filter hospitals based on search term
   const filteredHospitals = useMemo(() => {
     return hospitals.filter(h => 
-      h.toLowerCase().includes(searchTerm.toLowerCase())
+      h.hospital_name.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [hospitals, searchTerm]);
 
@@ -115,6 +143,7 @@ export default function BookOpdPage() {
       setHospitals([]);
       try {
         const res = await api.get(`/hospitals/by-city/${formData.city}`);
+        // Ensure we store the full object { id, hospital_name }
         setHospitals(res.data.data || []);
       } catch (err) {
         console.error("Failed to fetch hospitals:", err);
@@ -132,7 +161,8 @@ export default function BookOpdPage() {
     setFormData((prev) => {
       const newState = { ...prev, [name]: value };
       if (name === "city") {
-        newState.hospital_name = []; // Reset hospitals on city change
+        newState.hospital_name = [];
+        newState.hospital_ids = []; // Reset IDs when city changes
         setSearchTerm("");
       }
       return newState;
@@ -140,37 +170,62 @@ export default function BookOpdPage() {
   };
 
   // Toggle a single hospital
-  const toggleHospital = (hospital: string) => {
+  const toggleHospital = (hospital: Hospital) => {
     setFormData((prev) => {
-      const current = prev.hospital_name;
-      if (current.includes(hospital)) {
-        return { ...prev, hospital_name: current.filter(h => h !== hospital) };
+      const currentNames = prev.hospital_name;
+      const currentIds = prev.hospital_ids;
+
+      if (currentNames.includes(hospital.hospital_name)) {
+        // Remove
+        return { 
+          ...prev, 
+          hospital_name: currentNames.filter(h => h !== hospital.hospital_name),
+          hospital_ids: currentIds.filter(id => id !== hospital.id)
+        };
       } else {
-        return { ...prev, hospital_name: [...current, hospital] };
+        // Add
+        return { 
+          ...prev, 
+          hospital_name: [...currentNames, hospital.hospital_name],
+          hospital_ids: [...currentIds, hospital.id]
+        };
       }
     });
   };
 
   // Remove a tag
-  const removeHospitalTag = (e: React.MouseEvent, hospital: string) => {
-    e.stopPropagation(); // Prevent opening dropdown when clicking 'x'
-    toggleHospital(hospital);
+  const removeHospitalTag = (e: React.MouseEvent, hospitalName: string) => {
+    e.stopPropagation();
+    const hospObj = hospitals.find(h => h.hospital_name === hospitalName);
+    if (hospObj) toggleHospital(hospObj);
   };
 
   // Select/Deselect All Filtered
   const handleSelectAll = () => {
-    const allFilteredSelected = filteredHospitals.every(h => formData.hospital_name.includes(h));
+    const allFilteredSelected = filteredHospitals.every(h => formData.hospital_name.includes(h.hospital_name));
     
     setFormData(prev => {
-      const currentSet = new Set(prev.hospital_name);
+      const newNames = new Set(prev.hospital_name);
+      const newIds = new Set(prev.hospital_ids);
+
       if (allFilteredSelected) {
         // Deselect all filtered
-        filteredHospitals.forEach(h => currentSet.delete(h));
+        filteredHospitals.forEach(h => {
+            newNames.delete(h.hospital_name);
+            newIds.delete(h.id);
+        });
       } else {
         // Select all filtered
-        filteredHospitals.forEach(h => currentSet.add(h));
+        filteredHospitals.forEach(h => {
+            newNames.add(h.hospital_name);
+            newIds.add(h.id);
+        });
       }
-      return { ...prev, hospital_name: Array.from(currentSet) };
+      return { 
+          ...prev, 
+          hospital_name: Array.from(newNames),
+          hospital_ids: Array.from(newIds)
+      };
     });
   };
 
@@ -212,7 +267,6 @@ export default function BookOpdPage() {
       const res = await api.get(`/doctors/get-by-phone/${phone}`);
       setFormData((prev) => ({ ...prev, referee_name: res.data.data.name }));
     } catch { 
-      
       setDoctorError("Doctor not found.");
       setFormData((prev) => ({ ...prev, referee_name: "" }));
     } finally {
@@ -250,13 +304,20 @@ export default function BookOpdPage() {
     try {
       const submissionFormData = new FormData();
       
-      Object.keys(formData).forEach(key => {
-        const typedKey = key as keyof typeof formData;
-        if (typedKey === 'hospital_name') {
-             // Join array to string
+      // Explicitly cast key to keyof OpdFormData to avoid TS error
+      (Object.keys(formData) as Array<keyof OpdFormData>).forEach(key => {
+        if (key === 'hospital_name') {
+             // Join array to string for display/legacy purposes
              submissionFormData.append(key, formData.hospital_name.join(', '));
-        } else {
-             submissionFormData.append(key, formData[typedKey] as string);
+        } 
+        else if (key === 'hospital_ids') {
+             // Append each ID individually.
+             formData.hospital_ids.forEach((id) => {
+                 submissionFormData.append('hospital_ids', id);
+             });
+        } 
+        else {
+             submissionFormData.append(key, formData[key] as string);
         }
       });
       
@@ -277,6 +338,7 @@ export default function BookOpdPage() {
         referee_name: "",
         refree_phone_no: "",
         hospital_name: [],
+        hospital_ids: [],
         medical_condition: "",
         city: "",
         age: "",
@@ -447,7 +509,7 @@ export default function BookOpdPage() {
                         />
                         <div className="flex justify-between text-xs text-gray-400 px-1">
                            <button type="button" onClick={handleSelectAll} className="hover:text-cyan-400">
-                             {filteredHospitals.every(h => formData.hospital_name.includes(h)) ? "Deselect All" : "Select All"}
+                             {filteredHospitals.every(h => formData.hospital_name.includes(h.hospital_name)) ? "Deselect All" : "Select All"}
                            </button>
                            <span>{filteredHospitals.length} results</span>
                         </div>
@@ -457,14 +519,14 @@ export default function BookOpdPage() {
                       <div className="max-h-60 overflow-y-auto p-2">
                         {filteredHospitals.length > 0 ? (
                           filteredHospitals.map((hospital) => (
-                            <label key={hospital} className="flex items-center space-x-3 p-2 hover:bg-gray-700 rounded cursor-pointer transition-colors">
+                            <label key={hospital.id} className="flex items-center space-x-3 p-2 hover:bg-gray-700 rounded cursor-pointer transition-colors">
                               <input
                                 type="checkbox"
-                                checked={formData.hospital_name.includes(hospital)}
+                                checked={formData.hospital_name.includes(hospital.hospital_name)}
                                 onChange={() => toggleHospital(hospital)}
                                 className="w-4 h-4 text-cyan-600 bg-gray-900 border-gray-500 rounded focus:ring-cyan-500 focus:ring-offset-gray-800"
                               />
-                              <span className="text-sm text-gray-200 select-none">{hospital}</span>
+                              <span className="text-sm text-gray-200 select-none">{hospital.hospital_name}</span>
                             </label>
                           ))
                         ) : (

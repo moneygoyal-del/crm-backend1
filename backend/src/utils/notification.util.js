@@ -143,20 +143,47 @@ export const sendOpdNotifications = async (patientData) => {
     }
 
     // --- Notification 2: Hospital(s) (UltraMsg) ---
-    const hospitalGroupId = await getHospitalGroupId(patientData.hospital_name);
-    if (hospitalGroupId) {
-        const hospitalMessage = `*Dear ${patientData.hospital_name} Management,*\nWe have a new prospective patient, details are as under:\n\n` +
-                              `*Name:* ${patientData.patient_name}\n` +
-                              `*Patient Age:* ${patientData.age} years\n` +
-                              `*Gender:* ${patientData.gender}\n` +
-                              `*Medical Issue:* ${patientData.medical_condition}\n` +
-                              `*Panel:* ${patientData.panel}\n` +
-                              `*Patient Code:* ${patientData.booking_reference}\n\n` +
-                              `*Regards*\n*Operations, Medpho*`;
-        notificationPromises.push(
-            sendUltraMsg(hospitalGroupId, hospitalMessage)
-        );
+    
+    // 1. Get list of hospitals using IDs array
+    let targetHospitals = [];
+    const ids = patientData.hospital_ids; // Already an array
+
+    if (ids && ids.length > 0) {
+        try {
+            // Fetch hospital group IDs using "ANY" operator for array
+            const query = `
+                SELECT hospital_name, hospital_group_id 
+                FROM crm.hospitals 
+                WHERE id = ANY($1::uuid[])
+            `;
+            
+            const res = await pool.query(query, [ids]);
+            targetHospitals = res.rows;
+
+        } catch (e) {
+            console.error("Error fetching hospital groups:", e.message);
+        }
     }
+
+    // 2. Send message to EACH hospital group found
+    targetHospitals.forEach(h => {
+        if (h.hospital_group_id) {
+            const hospitalMessage = `*Dear ${h.hospital_name} Management,*\nWe have a new prospective patient, details are as under:\n\n` +
+                                  `*Name:* ${patientData.patient_name}\n` +
+                                  `*Patient Age:* ${patientData.age} years\n` +
+                                  `*Gender:* ${patientData.gender}\n` +
+                                  `*Medical Issue:* ${patientData.medical_condition}\n` +
+                                  `*Panel:* ${patientData.panel}\n` +
+                                  `*Patient Code:* ${patientData.booking_reference}\n\n` +
+                                  `*Regards*\n*Operations, Medpho*`;
+            
+            notificationPromises.push(
+                sendUltraMsg(h.hospital_group_id, hospitalMessage)
+            );
+        } else {
+            console.warn(`No hospital_group_id for: ${h.hospital_name}`);
+        }
+    });
 
     // --- Notification 3: NDM/Agent (UltraMsg) ---
     const ndmMessage = `*Dear Medphoite,*\nYour lead is successfully posted to Medpho, and shared with respective hospitals, details are as under:\n\n` +

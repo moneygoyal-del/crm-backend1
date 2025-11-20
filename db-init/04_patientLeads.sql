@@ -37,6 +37,7 @@ CREATE TABLE opd_bookings (
     gender VARCHAR(10),
     medical_condition TEXT NOT NULL,
     hospital_name TEXT NOT NULL,
+    hospital_ids UUID[],
     department VARCHAR(100),
     appointment_date DATE ,
     appointment_time TIME ,
