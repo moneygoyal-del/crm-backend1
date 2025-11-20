@@ -3,8 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import axios from 'axios';
 
-// Helper to get today's date for the form
-const getTodayDate = () => new Date().toISOString().split("T")[0];
+// --- FIX: Use local system time instead of UTC ---
+const getTodayDate = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
 
 // List of facilities
 const FACILITIES_LIST = [
@@ -222,7 +228,7 @@ export default function LogMeetingPage() {
                 opd_count: '', duration_of_meeting: '15', numPatientsDuringMeeting: '0',
                 rating: '3', queries_by_the_doctor: '', comments_by_ndm: '',
                 chances_of_getting_leads: 'medium', facilities: [],
-                timestamp_of_the_meeting: getTodayDate()
+                timestamp_of_the_meeting: getTodayDate() 
             });
             
             handleFileRemove('clinic');
@@ -245,7 +251,7 @@ export default function LogMeetingPage() {
 
     // --- 10. JSX ---
     const inputStyles = "w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
-    const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"; // This is now used
+    const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"; 
     const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
     const fileInputStyles = "w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50";
 
@@ -415,7 +421,7 @@ export default function LogMeetingPage() {
                             </div>
                         </div>
 
-                         {/* Section 3: Notes & Vibe Check --- THIS IS THE FIX --- */}
+                         {/* Section 3: Notes & Vibe Check */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
                              <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
                                 <svg className="w-5 h-5 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -450,7 +456,6 @@ export default function LogMeetingPage() {
                                 </div>
                             </div>
                         </div>
-                        {/* --- END FIX --- */}
 
                         {/* Section 4: Photo Proof */}
                         <div className="space-y-4 pt-6 border-t border-gray-700">
