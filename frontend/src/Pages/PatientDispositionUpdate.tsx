@@ -20,6 +20,12 @@ const DISPOSITION_OPTIONS = [
   "UPCM File Rejected"
 ];
 
+// Interface for our dropdown items
+interface HospitalOption {
+    name: string;
+    id: string;
+}
+
 export default function PatientDispositionUpdate() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
@@ -35,16 +41,16 @@ export default function PatientDispositionUpdate() {
   const [patientDetails, setPatientDetails] = useState({
     patient_name: "",
     current_disposition: "",
-    hospital_name: "", // This will display the full comma-separated list
+    hospital_name: "", 
   });
 
   // Form Data for Update
-  const [selectedHospital, setSelectedHospital] = useState("");
+  const [selectedHospitalId, setSelectedHospitalId] = useState(""); // Store ID, not Name
   const [newDisposition, setNewDisposition] = useState("");
   const [comments, setComments] = useState("");
   
   // Lists
-  const [hospitalsList, setHospitalsList] = useState<string[]>([]);
+  const [hospitalsList, setHospitalsList] = useState<HospitalOption[]>([]);
   
   // --- 1. Fetch Patient Details ---
   const handleFetchPatient = async () => {
@@ -57,6 +63,7 @@ export default function PatientDispositionUpdate() {
     setSuccess("");
     setIsFetched(false);
     setHospitalsList([]); 
+    setSelectedHospitalId("");
 
     try {
       const res = await api.get(`/patientLeads/get-details/${bookingRef}`);
@@ -68,20 +75,27 @@ export default function PatientDispositionUpdate() {
         hospital_name: data.hospital_name || "N/A"
       });
 
-      // --- MODIFICATION: Parse the comma-separated hospitals ---
-      // Assuming data.hospital_name is "Hospital A, Hospital B"
+      // --- Parse names AND IDs ---
       if (data.hospital_name) {
-          const hospitals = data.hospital_name.split(',').map((h: string) => h.trim());
-          setHospitalsList(hospitals);
+          const names = data.hospital_name.split(',').map((h: string) => h.trim());
+          // IDs come as an array from the backend (ensure backend sends this!)
+          const ids = data.hospital_ids || [];
+
+          // Map them together. 
+          const combinedList = names.map((name: string, index: number) => ({
+              name: name,
+              id: ids[index] || "" 
+          })).filter((h: HospitalOption) => h.id !== ""); // Filter out ones without IDs
+
+          setHospitalsList(combinedList);
           
           // Pre-select the first one by default if available
-          if (hospitals.length > 0) {
-              setSelectedHospital(hospitals[0]);
+          if (combinedList.length > 0) {
+              setSelectedHospitalId(combinedList[0].id);
           }
       }
 
       setNewDisposition(""); 
-      
       setIsFetched(true);
       setSuccess("Patient details fetched.");
 
@@ -109,9 +123,13 @@ export default function PatientDispositionUpdate() {
         return;
     }
 
+    // Find the name corresponding to the selected ID to send both
+    const selectedHospitalObj = hospitalsList.find(h => h.id === selectedHospitalId);
+    
     const payload = {
       booking_reference: bookingRef,
-      hospital_name: selectedHospital, // The user selects ONE from the list of booked hospitals
+      hospital_name: selectedHospitalObj ? selectedHospitalObj.name : null,
+      hospital_id: selectedHospitalId || null, // Send the ID
       new_disposition: newDisposition, 
       comments: comments 
     };
@@ -130,6 +148,7 @@ export default function PatientDispositionUpdate() {
           setSuccess("");
           setPatientDetails({ patient_name: "", current_disposition: "", hospital_name: "" });
           setHospitalsList([]);
+          setSelectedHospitalId("");
       }, 3000);
 
     } catch (err) {
@@ -179,7 +198,7 @@ export default function PatientDispositionUpdate() {
           </div>
 
           <div className="px-6 pt-6">
-            {error && <div className="mb-2 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200 text-sm">{error}</div>}
+            {error && <div className="mb-2 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200 text-sm animate-shake">{error}</div>}
             {success && <div className="mb-2 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">{success}</div>}
           </div>
 
@@ -231,17 +250,17 @@ export default function PatientDispositionUpdate() {
                 <div>
                   <label className={labelStyles}>Select Outcome Hospital</label>
                   <select
-                    value={selectedHospital}
-                    onChange={(e) => setSelectedHospital(e.target.value)}
+                    value={selectedHospitalId}
+                    onChange={(e) => setSelectedHospitalId(e.target.value)}
                     className={inputStyles}
                     disabled={loading}
                   >
                     <option value="" disabled>Select Hospital</option>
                     {hospitalsList.length === 0 ? (
-                        <option disabled>No hospitals found</option>
+                        <option disabled>No hospitals available</option>
                     ) : (
-                        hospitalsList.map((h, idx) => (
-                            <option key={idx} value={h}>{h}</option>
+                        hospitalsList.map((h) => (
+                            <option key={h.id} value={h.id}>{h.name}</option>
                         ))
                     )}
                   </select>
@@ -290,6 +309,7 @@ export default function PatientDispositionUpdate() {
                       setBookingRef("");
                       setComments("");
                       setHospitalsList([]);
+                      setSelectedHospitalId("");
                     }}
                     className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold rounded-lg transition-colors"
                   >

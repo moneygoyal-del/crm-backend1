@@ -837,13 +837,13 @@ export default class patientLeadController {
             throw new apiError(400, "Booking reference is required");
         }
 
-
         const query = `
             SELECT 
                 booking_reference,
                 patient_name,
                 current_disposition,
-                hospital_name -- This will now contain "Hosp A, Hosp B"
+                hospital_name, 
+                hospital_ids   -- <--- ADDED: Fetch the IDs
             FROM crm.opd_bookings
             WHERE booking_reference = $1
         `;
@@ -860,9 +860,10 @@ export default class patientLeadController {
             "Patient details fetched successfully"
         ));
     });
-   
+
     updatePatientDisposition = asyncHandler(async (req, res) => {
-        const { booking_reference, new_disposition, hospital_name, comments } = req.body;
+        // Added hospital_id to destructuring
+        const { booking_reference, new_disposition, hospital_name, hospital_id, comments } = req.body;
         const userId = req.user.id;
 
         if (!booking_reference || !new_disposition) {
@@ -901,15 +902,19 @@ export default class patientLeadController {
                 ]
             );
 
-            // 3. Update MAIN table (Disposition AND Hospital Name)
-           
+            // 3. Update MAIN table 
+            // We wrap the single hospital_id in an array because the column is UUID[]
             await client.query(
                 `UPDATE opd_bookings 
                  SET current_disposition = $1, 
-                     hospital_name = COALESCE($2, hospital_name), 
+                     hospital_name = COALESCE($2, hospital_name),
+                     hospital_ids = CASE 
+                        WHEN $4::uuid IS NOT NULL THEN ARRAY[$4::uuid] 
+                        ELSE hospital_ids 
+                     END,
                      updated_at = NOW()
                  WHERE id = $3`,
-                [new_disposition, hospital_name, opdId]
+                [new_disposition, hospital_name, opdId, hospital_id] 
             );
 
             await client.query('COMMIT');
@@ -918,7 +923,6 @@ export default class patientLeadController {
             const now = new Date();
             const monthName = now.toLocaleString('default', { month: 'long' });
             
-            // Send the SELECTED hospital to the sheet log
             const sheetRow = [
                 booking_reference,
                 hospital_name || "N/A", 
@@ -935,7 +939,8 @@ export default class patientLeadController {
             logAudit(userId, 'DISPOSITION_UPDATE', 'opd_booking', opdId, {
                 old_status: prevDisposition,
                 new_status: new_disposition,
-                hospital_updated_to: hospital_name
+                hospital_updated_to: hospital_name,
+                hospital_id_updated: hospital_id
             });
 
             res.status(200).json(new apiResponse(200, {}, "Disposition and Hospital updated successfully."));
