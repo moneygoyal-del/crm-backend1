@@ -1,4 +1,5 @@
 import { pool } from '../DB/db.js';
+import { getIndianTimeISO } from '../helper/preprocess_data.helper.js';
 
 /**
  * Logs an action to the audit trail.
@@ -10,10 +11,14 @@ import { pool } from '../DB/db.js';
  */
 export const logAudit = async (userId, action, entityType = null, entityId = null, details = null) => {
     try {
+        // Use the helper to get current time in IST
+        const created_at = getIndianTimeISO();
+
+        // Explicitly insert the created_at timestamp
         await pool.query(
-            `INSERT INTO crm.audit_log (user_id, action, entity_type, entity_id, details)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [userId, action, entityType, entityId, details]
+            `INSERT INTO crm.audit_log (user_id, action, entity_type, entity_id, details, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [userId, action, entityType, entityId, details, created_at]
         );
     } catch (error) {
         // Log the error, but don't crash the main request
