@@ -5,6 +5,8 @@ import https from 'https';
 
 
 const sendUltraMsg = async (to, body) => {
+    if (!to) return; // Safety check
+    
     const url = `https://api.ultramsg.com/${process.env.ULTRAMSG_INSTANCE}/messages/chat`;
     const params = new URLSearchParams();
     params.append('token', process.env.ULTRAMSG_TOKEN);
@@ -297,4 +299,40 @@ export const sendDoctorMeetingNotification = async (doctorName, ndManagerName, d
         console.error(`Failed to send AiSensy to ${doctorPhoneNumber}:`, error.response?.data || error.message);
     }
 
+};
+
+/**
+ * Sends WhatsApp notifications to NDM and Referee when a patient's disposition is updated.
+ * @param {Object} data - The data object containing patient, ndm, and referee details.
+ */
+export const sendDispositionUpdateNotifications = async (data) => {
+    console.log(`Sending disposition update notifications for: ${data.uniqueCode}`);
+
+    const promises = [];
+
+    // 1. Notify NDM (Logged-in User / Agent)
+    if (data.ndmContact) {
+        const ndmMessage = `*Dear Medphoite,*\nThe disposition of your lead is updated, details are as under:\n\n` +
+            `*Patient Unique Code:* ${data.uniqueCode}\n` +
+            `*Name:* ${data.name}\n` +
+            `*Disposition:* ${data.disposition}\n` +
+            `*Panel:* ${data.panel || 'N/A'}\n\n` +
+            `*Regards*\n*Operations, Medpho*`;
+        
+        promises.push(sendUltraMsg(data.ndmContact, ndmMessage));
+    }
+
+    // 2. Notify Referee (Doctor)
+    if (data.refereeContactNumber && data.refereeName) {
+        const refereeMessage = `*Dear ${data.refereeName},*\nThe disposition of your referee patient is updated, details are as under:\n\n` +
+            `*Patient Unique Code:* ${data.uniqueCode}\n` +
+            `*Name:* ${data.name}\n` +
+            `*Disposition:* ${data.disposition}\n` +
+            `*Panel:* ${data.panel || 'N/A'}\n\n` +
+            `*Regards*\n*Operations, Medpho*`;
+        
+        promises.push(sendUltraMsg(data.refereeContactNumber, refereeMessage));
+    }
+
+    await Promise.allSettled(promises);
 };

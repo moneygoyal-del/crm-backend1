@@ -5,7 +5,7 @@ import { pool } from "../DB/db.js";
 import readCsvFile from "../helper/read_csv.helper.js";
 import apiError from "../utils/apiError.utils.js";
 import { addToSheetQueue } from "../utils/sheetQueue.util.js"; 
-import { sendOpdNotifications,fetchQrCodeUrl,sendAiSensy } from "../utils/notification.util.js";
+import { sendOpdNotifications,fetchQrCodeUrl,sendAiSensy, sendDispositionUpdateNotifications } from "../utils/notification.util.js";
 import { uploadAndGetLink } from "../utils/driveUploader.utils.js"; 
 import fs from "fs/promises"; 
 import path from "path";
@@ -862,7 +862,6 @@ export default class patientLeadController {
     });
 
     updatePatientDisposition = asyncHandler(async (req, res) => {
-        // Added hospital_id to destructuring
         const { booking_reference, new_disposition, hospital_name, hospital_id, comments } = req.body;
         const userId = req.user.id;
 
@@ -875,17 +874,33 @@ export default class patientLeadController {
         try {
             await client.query('BEGIN');
 
-            // 1. Fetch current state
-            const currentRes = await client.query(
-                "SELECT id, current_disposition FROM opd_bookings WHERE booking_reference = $1",
-                [booking_reference]
-            );
+            // 1. Fetch current state AND details for notification (NDM, Referee, Patient info)
+            // We join with users (for NDM phone) and doctors (for Referee info)
+            const fetchQuery = `
+                SELECT 
+                    ob.id, 
+                    ob.current_disposition, 
+                    ob.patient_name,
+                    ob.payment_mode,
+                    u.phone AS ndm_phone,
+                    d.first_name AS ref_first, 
+                    d.last_name AS ref_last, 
+                    d.phone AS ref_phone
+                FROM opd_bookings ob
+                LEFT JOIN users u ON ob.created_by_agent_id = u.id
+                LEFT JOIN doctors d ON ob.referee_id = d.id
+                WHERE ob.booking_reference = $1
+            `;
+
+            const currentRes = await client.query(fetchQuery, [booking_reference]);
 
             if (currentRes.rows.length === 0) {
                 throw new apiError(404, "Booking not found.");
             }
 
-            const { id: opdId, current_disposition: prevDisposition } = currentRes.rows[0];
+            const row = currentRes.rows[0];
+            const opdId = row.id;
+            const prevDisposition = row.current_disposition;
 
             // 2. Insert into DB LOGS table
             await client.query(
@@ -903,7 +918,6 @@ export default class patientLeadController {
             );
 
             // 3. Update MAIN table 
-            // We wrap the single hospital_id in an array because the column is UUID[]
             await client.query(
                 `UPDATE opd_bookings 
                  SET current_disposition = $1, 
@@ -919,10 +933,27 @@ export default class patientLeadController {
 
             await client.query('COMMIT');
 
-            // --- 4. SHEET QUEUE SYNC ---
+            // --- 4. NOTIFICATIONS & LOGS ---
+            
+            // Prepare data for WhatsApp Notification
+            const notificationData = {
+                uniqueCode: booking_reference,
+                name: row.patient_name,
+                disposition: new_disposition,
+                panel: row.payment_mode,
+                ndmContact: req.user.phone, 
+                refereeName: row.ref_first ? `${row.ref_first} ${row.ref_last || ''}`.trim() : null,
+                refereeContactNumber: row.ref_phone
+            };
+
+            // Trigger Notification (Fire and forget)
+            sendDispositionUpdateNotifications(notificationData).catch(err => 
+                console.error("Background Notification Error:", err.message)
+            );
+
+            // Sheet Queue Sync
             const now = new Date();
             const monthName = now.toLocaleString('default', { month: 'long' });
-            
             const sheetRow = [
                 booking_reference,
                 hospital_name || "N/A", 
@@ -932,7 +963,6 @@ export default class patientLeadController {
                 now.toISOString(),
                 monthName
             ];
-
             await addToSheetQueue("LOG_DISPOSITION_UPDATE", sheetRow);
 
             // Audit Log
