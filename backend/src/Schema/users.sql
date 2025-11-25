@@ -4,9 +4,10 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100),
+    gender VARCHAR(20),
     phone VARCHAR(20) UNIQUE NOT NULL,
     secondary_phone VARCHAR(20) ,
-    role VARCHAR(50) NOT NULL DEFAULT 'agent',
+    role VARCHAR(50) NOT NULL DEFAULT 'agent', -- 'super_admin', 'team_lead', 'operations', 'online_sales', 'offline_sales'
     team_id UUID, 
     is_active BOOLEAN DEFAULT true,
     last_login TIMESTAMP,

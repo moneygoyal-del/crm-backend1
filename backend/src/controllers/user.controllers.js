@@ -9,12 +9,12 @@ import { logAudit } from "../utils/auditLogger.util.js"
 
 export default class userController {
     createUser = asyncHandler(async (req, res, next) => {
-        let { email, first_name, last_name, phone, secondary_phone, team_id, role } = req.body;
+        let { email, first_name, last_name, phone, secondary_phone, team_id, role, gender } = req.body;
 
         email = processString(email);
         first_name = processString(first_name);
         last_name = processString(last_name);
-
+        gender = processString(gender);
         role = processString(role);
         if (!role) role = "agent";
 
@@ -25,17 +25,20 @@ export default class userController {
             secondary_phone_processed = process_phone_no(secondary_phone);
         }
 
-        // MODIFIED: Use IST
+       
         const created_at = getIndianTimeISO();
         const updated_at = created_at;
 
         if (!phone_processed || !first_name) throw new apiError(400, "First name and phone number are required");
         
         const newUser = await pool.query(
-            `INSERT INTO USERS (EMAIL,FIRST_NAME,LAST_NAME,PHONE,SECONDARY_PHONE,TEAM_ID,CREATED_AT,UPDATED_AT, PASSWORD_HASH, ROLE) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'medpho', $9) 
-             RETURNING ID,PHONE;`,
-            [email, first_name, last_name, phone_processed, secondary_phone_processed, team_id, created_at, updated_at, role]
+            `INSERT INTO USERS (EMAIL, FIRST_NAME, LAST_NAME, PHONE, SECONDARY_PHONE, TEAM_ID, CREATED_AT, UPDATED_AT, PASSWORD_HASH, ROLE, GENDER) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'medpho', $9, $10) 
+             RETURNING ID, PHONE;`,
+            [
+                email, first_name, last_name, phone_processed, secondary_phone_processed, 
+                team_id, created_at, updated_at, role, gender 
+            ]
         );
 
         if (!newUser.rows) throw new apiError(500, "Failed to create new user");
@@ -50,14 +53,19 @@ export default class userController {
 
     createUserBatchNDM = asyncHandler(async (req, res, next) => {
         const file = req.file;
+        if (!file) throw new apiError(400, "No file uploaded.");
+
         const users = await readCsvFile(file.path);
 
-        fs.unlink(file.path, (err) => {});
+        
+        fs.unlink(file.path, (err) => {
+            if (err) console.error("Error deleting temp file:", err);
+        });
 
         const newUsers = [];
         const failedRows = [];
         
-        // MODIFIED: Use IST
+        
         const created_at = getIndianTimeISO();
         const updated_at = created_at;
 
@@ -66,24 +74,45 @@ export default class userController {
             const rowNumber = Number(ind) + 2; 
 
             try {
-                const phone = process_phone_no(row[0]);
-                const first_name = processString(row[1]);
-                const last_name = processString(row[2]);
-                const role = processString(row[3]);
-                const secondary_phone_raw = row[4]; 
+                
+                
+                const first_name = processString(row[0]);
+                const last_name = processString(row[1]);
+                const gender = processString(row[2]);
+                const phone = process_phone_no(row[3]);
+                const secondary_phone_raw = row[4];
+                const role = processString(row[5]);
+                
+                
+                const statusString = processString(row[6]); 
+                const is_active = statusString === 'active'; 
 
-                if (!phone || !first_name) throw new Error("Missing required fields");
+                if (!phone || !first_name) throw new Error("Missing required fields (First Name or Phone)");
 
                 let secondary_phone_processed = null;
                 if (secondary_phone_raw && secondary_phone_raw.trim()) {
                     try { secondary_phone_processed = process_phone_no(secondary_phone_raw); } catch (e) {}
                 }
 
+               
                 const newUser = await pool.query(
-                    `INSERT INTO USERS (PHONE,FIRST_NAME,LAST_NAME,SECONDARY_PHONE,CREATED_AT,UPDATED_AT, PASSWORD_HASH, ROLE) 
-                     VALUES ($1, $2, $3, $4, $5, $6, 'medpho', $7) 
-                     RETURNING ID,PHONE;`,
-                    [phone, first_name, last_name, secondary_phone_processed, created_at, updated_at, role]
+                    `INSERT INTO USERS (
+                        FIRST_NAME, LAST_NAME, GENDER, PHONE, SECONDARY_PHONE, 
+                        ROLE, IS_ACTIVE, CREATED_AT, UPDATED_AT, PASSWORD_HASH
+                    ) 
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'medpho') 
+                     RETURNING ID, PHONE;`,
+                    [
+                        first_name, 
+                        last_name, 
+                        gender, 
+                        phone, 
+                        secondary_phone_processed, 
+                        role, 
+                        is_active,  
+                        created_at, 
+                        updated_at
+                    ]
                 );
                 newUsers.push(newUser.rows[0]);
 
@@ -99,7 +128,6 @@ export default class userController {
             failures: failedRows
         }, "NDMs batch creation complete."));
     });
-
 
     deleteUser = asyncHandler(async (req, res, next) => {
         const { id, phone } = req.body;
@@ -120,11 +148,11 @@ export default class userController {
 
     updateUser = asyncHandler(async (req, res, next) => {
         const { id } = req.body; 
-        let { email, first_name, last_name, phone, secondary_phone, team_id, role, is_active } = req.body;
+        let { email, first_name, last_name, phone, secondary_phone, team_id, role, is_active, gender } = req.body;
 
         if (!id) throw new apiError(400, "User 'id' is required");
 
-        // MODIFIED: Use IST
+        
         const updated_at = getIndianTimeISO();
         const updateFields = [];
         const queryParams = [];
@@ -143,6 +171,7 @@ export default class userController {
         addField(email, 'email', processString);
         addField(first_name, 'first_name', processString);
         addField(last_name, 'last_name', processString);
+        addField(gender, 'gender', processString);
         addField(team_id, 'team_id');
         addField(role, 'role', processString);
         addField(is_active, 'is_active'); 
