@@ -640,7 +640,7 @@ export default class patientLeadController {
                 name: row.patient_name,
                 disposition: new_disposition,
                 panel: row.payment_mode,
-                ndmContact: req.user.phone, 
+                ndmContact: row.ndm_phone,  
                 refereeName: row.ref_first ? `${row.ref_first} ${row.ref_last || ''}`.trim() : null,
                 refereeContactNumber: row.ref_phone
             };
