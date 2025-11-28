@@ -1,7 +1,7 @@
 import { Router } from "express";
 import patientLeadController from "../controllers/patientLead.controller.js";
 import upload from "../middleware/multer.middleware.js"
-import { verifyJWT } from "../middleware/auth.middleware.js";
+import { verifyJWT, verifyRole } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
@@ -15,7 +15,13 @@ router.route("/get-phone/:booking_reference").get(verifyJWT, PatientLeadControll
 router.route("/update").put(verifyJWT,PatientLeadController.updatePatientLead);
 
 router.route("/get-details/:booking_reference").get(verifyJWT, PatientLeadController.getPatientDetailsByRef);
-router.route("/update-disposition").post(verifyJWT, PatientLeadController.updatePatientDisposition);
+
+
+router.route("/update-disposition").post(
+    verifyJWT, 
+    verifyRole(["operations", "super_admin"]), 
+    PatientLeadController.updatePatientDisposition
+);
 
 router.route("/create-web").post(
     verifyJWT, 

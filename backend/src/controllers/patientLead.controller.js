@@ -13,7 +13,8 @@ import {
     sendOpdNotifications, 
     fetchQrCodeUrl, 
     sendAiSensy, 
-    sendDispositionUpdateNotifications 
+    sendDispositionUpdateNotifications,
+    sendPhoneUpdateNotifications 
 } from "../utils/notification.util.js";
 
 export default class patientLeadController {
@@ -521,7 +522,26 @@ export default class patientLeadController {
             try {
                 const new_phone_updated = updatedRow.patient_phone;
                 if (patient_phone && old_patient_phone && new_phone_updated !== old_patient_phone) {
+                   
+                    const detailsQuery = `
+                        SELECT 
+                            u.phone AS ndm_phone, 
+                            ob.hospital_ids, 
+                            ob.hospital_name,
+                            ob.appointment_date,
+                            ob.appointment_time,
+                            ob.payment_mode
+                        FROM opd_bookings ob
+                        LEFT JOIN users u ON ob.created_by_agent_id = u.id
+                        WHERE ob.id = $1
+                    `;
+                    const detailsRes = await pool.query(detailsQuery, [updatedRow.id]);
+                    const details = detailsRes.rows[0];
+
+                    // --- 2. Sheet Update ---
                     await addToSheetQueue("UPDATE_PATIENT_PHONE", { booking_reference: updatedRow.booking_reference, new_phone: new_phone_updated });
+                    
+                    // --- 3. QR Code Generation ---
                     const qrPatientData = {
                         name: updatedRow.patient_name,
                         age: updatedRow.age || "N/A",
@@ -532,9 +552,28 @@ export default class patientLeadController {
                         timestamp: new Date().toISOString()
                     };
                     const qrCodeUrl = await fetchQrCodeUrl(qrPatientData);
+                    
+                    // --- 4. Send notification to Patient (AiSensy) ---
                     if (qrCodeUrl) await sendAiSensy(updatedRow.patient_phone, updatedRow.patient_name, qrCodeUrl);
+
+                    // --- 5. Send notifications to NDM, Saathi, and Hospitals (UltraMsg) ---
+                    const notificationData = {
+                        uniqueCode: updatedRow.booking_reference,
+                        name: updatedRow.patient_name,
+                        age: updatedRow.age || "N/A",
+                        gender: updatedRow.gender || "N/A",
+                        phoneNumber: new_phone_updated,
+                        ndmContact: details?.ndm_phone, // Using fetched phone number from DB
+                        medicalIssue: updatedRow.medical_condition,
+                        panel: details?.payment_mode || updatedRow.payment_mode || "N/A",
+                        hospitals: details?.hospital_name || updatedRow.hospital_name,
+                        visitingDate: `${details?.appointment_date || ''} ${details?.appointment_time || ''}`.trim(),
+                        hospitalIds: details?.hospital_ids || []
+                    };
+
+                    await sendPhoneUpdateNotifications(notificationData);
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) { console.error("Error in updatePatientLead background tasks:", e); }
         };
         runBackgroundTasks();
     });
@@ -598,7 +637,15 @@ export default class patientLeadController {
         try {
             await client.query('BEGIN');
             const fetchQuery = `
-                SELECT ob.id, ob.current_disposition, ob.patient_name, ob.payment_mode, u.phone AS ndm_phone, d.first_name AS ref_first, d.last_name AS ref_last, d.phone AS ref_phone
+                SELECT 
+                    ob.id, 
+                    ob.current_disposition, 
+                    ob.patient_name, 
+                    ob.payment_mode, 
+                    u.phone AS ndm_phone, 
+                    d.first_name AS ref_first, 
+                    d.last_name AS ref_last, 
+                    d.phone AS ref_phone
                 FROM opd_bookings ob
                 LEFT JOIN users u ON ob.created_by_agent_id = u.id
                 LEFT JOIN doctors d ON ob.referee_id = d.id
@@ -640,7 +687,7 @@ export default class patientLeadController {
                 name: row.patient_name,
                 disposition: new_disposition,
                 panel: row.payment_mode,
-                ndmContact: req.user.phone, 
+                ndmContact: row.ndm_phone,  
                 refereeName: row.ref_first ? `${row.ref_first} ${row.ref_last || ''}`.trim() : null,
                 refereeContactNumber: row.ref_phone
             };
