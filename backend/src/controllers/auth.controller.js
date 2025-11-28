@@ -60,7 +60,7 @@ export default class authController {
         // 5. Transaction Logic
         const otp_hash = await bcrypt.hash(otp, 10);
         
-        // MODIFIED: Use helper to get IST time + 10 minutes for expiry
+       
         const expires_at = getIndianTimeISO(10); 
 
         const client = await pool.connect();
@@ -88,9 +88,9 @@ export default class authController {
 
         const phone_processed = process_phone_no(phone);
 
-        // 1. Find user
+    
         const userResult = await pool.query(
-            "SELECT id, first_name, last_name, phone FROM users WHERE phone = $1",
+            "SELECT id, first_name, last_name, phone, role FROM users WHERE phone = $1",
             [phone_processed]
         );
         if (userResult.rows.length === 0) throw new apiError(404, "User Not Found");
@@ -98,7 +98,6 @@ export default class authController {
         const user = userResult.rows[0];
 
         // 2. Find a matching, valid OTP for that user
-        // MODIFIED: Compare against current IST time
         const currentIST = getIndianTimeISO();
         
         const otpResult = await pool.query(
@@ -142,11 +141,11 @@ export default class authController {
             client.release();
         }
 
-        // 5. Create Tokens
-        const accessTokenPayload = { id: user.id, phone: user.phone };
+        // 5. Create Tokens (INCLUDE ROLE IN PAYLOAD)
+        const accessTokenPayload = { id: user.id, phone: user.phone, role: user.role };
         const accessTokenExpiresIn = '15m'; 
         const accessToken = jwt.sign(accessTokenPayload, process.env.JWT_SECRET, { expiresIn: accessTokenExpiresIn });
-        const accessTokenExpiresAt = Date.now() + (15 * 60 * 1000); // Client-side expiry reference (keep as UTC timestamp or change if needed)
+        const accessTokenExpiresAt = Date.now() + (15 * 60 * 1000); 
 
         // --- Refresh Token ---
         const refreshToken = randomBytes(64).toString('hex');
@@ -160,9 +159,11 @@ export default class authController {
             [user.id, refreshTokenHash, refreshTokenExpiresAt, loginTime]
         );
 
+        // Include role in response so Frontend can use it
         const userData = {
             id: user.id,
-            name: `${user.first_name} ${user.last_name || ''}`.trim()
+            name: `${user.first_name} ${user.last_name || ''}`.trim(),
+            role: user.role
         };
 
         await logAudit(user.id, 'LOGIN_SUCCESS', 'auth', null, { ip: req.ip });
@@ -191,7 +192,6 @@ export default class authController {
         const userId = decodedOldToken?.id;
         if (!userId) throw new apiError(401, "Invalid old access token");
 
-        // MODIFIED: Check against current IST
         const currentIST = getIndianTimeISO();
         
         const tokenResult = await pool.query(
@@ -215,10 +215,12 @@ export default class authController {
         // Rotate Token
         await pool.query("DELETE FROM crm.user_refresh_tokens WHERE id = $1", [foundTokenDbId]);
 
-        const userResult = await pool.query("SELECT id, phone, first_name FROM crm.users WHERE id = $1", [userId]);
+        // FETCH ROLE AGAIN to ensure fresh permissions
+        const userResult = await pool.query("SELECT id, phone, first_name, role FROM crm.users WHERE id = $1", [userId]);
         const user = userResult.rows[0];
         
-        const accessTokenPayload = { id: user.id, phone: user.phone };
+        // Include role in new Access Token
+        const accessTokenPayload = { id: user.id, phone: user.phone, role: user.role };
         const accessTokenExpiresIn = '15m';
         const accessToken = jwt.sign(accessTokenPayload, process.env.JWT_SECRET, { expiresIn: accessTokenExpiresIn });
         const accessTokenExpiresAt = Date.now() + (15 * 60 * 1000);

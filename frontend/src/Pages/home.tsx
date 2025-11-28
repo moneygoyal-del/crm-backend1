@@ -2,13 +2,16 @@ import { Link } from 'react-router-dom';
 
 function Home() {
   const userString = localStorage.getItem('user');
-  const user = userString ? JSON.parse(userString) : { name: 'User' };
+  const user = userString ? JSON.parse(userString) : { name: 'User', role: '' };
 
   const handleLogout = () => {
     localStorage.removeItem('authToken');
     localStorage.removeItem('user');
     window.location.href = '/login';
   };
+
+
+  const canUpdateDisposition = user.role === 'operations' || user.role === 'super_admin';
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex flex-col">
@@ -25,7 +28,7 @@ function Home() {
             {/* 2. User name and Logout on the right */}
             <div className="flex items-center space-x-4">
               <span className="text-white font-medium capitalize">
-                {user.name.split(' ')[0]}
+                {user.name.split(' ')[0]} <span className="text-xs text-gray-500">({user.role})</span>
               </span>
               <button
                 onClick={handleLogout}
@@ -53,9 +56,7 @@ function Home() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 flex-grow">
-        {/* Welcome section was already removed */}
-
-     
+        
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* 1. Book OPD Card */}
           <Link to="/book-opd" className="group">
@@ -84,16 +85,16 @@ function Home() {
             </div>
           </Link>
 
-          {/* 4. --- Disposition Update --- */}
-
-          <Link to="/update-disposition" className="group">
-            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-purple-500 transition-all duration-300 transform hover:scale-[1.02] hover:shadow-2xl hover:shadow-purple-500/20">
-              <h3 className="text-xl font-bold text-white mb-2">Update Disposition</h3>
-            </div>
-          </Link>
+          {/* 4. --- Disposition Update (CONDITIONAL) --- */}
+          {canUpdateDisposition && (
+            <Link to="/update-disposition" className="group">
+              <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-purple-500 transition-all duration-300 transform hover:scale-[1.02] hover:shadow-2xl hover:shadow-purple-500/20">
+                <h3 className="text-xl font-bold text-white mb-2">Update Disposition</h3>
+              </div>
+            </Link>
+          )}
         </div>
 
-        
       </main>
 
       <footer className="bg-gray-800/30 border-t border-gray-700">
