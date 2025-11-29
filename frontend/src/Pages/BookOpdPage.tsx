@@ -17,7 +17,7 @@ interface Hospital {
   hospital_name: string;
 }
 
-// Explicitly define the shape of our form data
+
 interface OpdFormData {
   booking_reference: string;
   patient_name: string;
@@ -25,7 +25,7 @@ interface OpdFormData {
   referee_name: string;
   refree_phone_no: string;
   hospital_name: string[]; // For display/search
-  hospital_ids: string[];  // For backend logic (The missing field)
+  hospital_ids: string[];  // For backend logic
   medical_condition: string;
   city: string;
   age: string;
@@ -40,18 +40,15 @@ export default function BookOpdPage() {
   const navigate = useNavigate();
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // --- 1. State for dropdown lists ---
   const [cities, setCities] = useState<string[]>([]);
-  // Typed as an array of Hospital objects
   const [hospitals, setHospitals] = useState<Hospital[]>([]); 
   const [isHospitalLoading, setIsHospitalLoading] = useState(false);
 
-  // --- State for Enhanced Dropdown ---
+
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
-  // --- 2. State for the form data ---
-  // Initialize with all fields, including hospital_ids
+
   const [formData, setFormData] = useState<OpdFormData>({
     booking_reference: generateLeadId(),
     patient_name: "",
@@ -59,7 +56,7 @@ export default function BookOpdPage() {
     referee_name: "",
     refree_phone_no: "",
     hospital_name: [], 
-    hospital_ids: [], // <--- Added to fix the TypeScript error
+    hospital_ids: [], 
     medical_condition: "",
     city: "",
     age: "",
@@ -73,7 +70,9 @@ export default function BookOpdPage() {
   // --- 3. State for UI and errors ---
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  
+  // NEW: State for Success Modal Data
+  const [successData, setSuccessData] = useState<{ref: string, name: string} | null>(null);
 
   // --- 4. State for doctor name lookup ---
   const [isFetchingDoctor, setIsFetchingDoctor] = useState(false);
@@ -143,7 +142,6 @@ export default function BookOpdPage() {
       setHospitals([]);
       try {
         const res = await api.get(`/hospitals/by-city/${formData.city}`);
-        // Ensure we store the full object { id, hospital_name }
         setHospitals(res.data.data || []);
       } catch (err) {
         console.error("Failed to fetch hospitals:", err);
@@ -273,12 +271,42 @@ export default function BookOpdPage() {
       setIsFetchingDoctor(false);
     }
   };
+
+  // --- Helper to Reset Form ---
+  const resetForm = () => {
+    setFormData({
+      booking_reference: generateLeadId(),
+      patient_name: "",
+      patient_phone: "",
+      referee_name: "",
+      refree_phone_no: "",
+      hospital_name: [],
+      hospital_ids: [],
+      medical_condition: "",
+      city: "",
+      age: "",
+      gender: "",
+      panel: "",
+      appointment_date: getTodayDate(),
+      appointment_time: getCurrentTime(),
+      current_disposition: "opd_booked",
+    });
+    setHospitals([]);
+    setSearchTerm("");
+    setAadharFile(null);
+    setPmjayFile(null);
+
+    const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
+    if (aadharInput) aadharInput.value = "";
+    const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
+    if (pmjayInput) pmjayInput.value = "";
+  };
   
   // --- Submit Handler ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setSuccess("");
+    setSuccessData(null);
 
     if (
       !formData.patient_name ||
@@ -304,14 +332,11 @@ export default function BookOpdPage() {
     try {
       const submissionFormData = new FormData();
       
-      // Explicitly cast key to keyof OpdFormData to avoid TS error
       (Object.keys(formData) as Array<keyof OpdFormData>).forEach(key => {
         if (key === 'hospital_name') {
-             // Join array to string for display/legacy purposes
              submissionFormData.append(key, formData.hospital_name.join(', '));
         } 
         else if (key === 'hospital_ids') {
-             // Append each ID individually.
              formData.hospital_ids.forEach((id) => {
                  submissionFormData.append('hospital_ids', id);
              });
@@ -328,35 +353,11 @@ export default function BookOpdPage() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       
-      setSuccess(`✅ Booking ${res.data.data.booking_reference} created successfully.`);
-      setTimeout(() => setSuccess(""), 5000);
-
-      setFormData({
-        booking_reference: generateLeadId(),
-        patient_name: "",
-        patient_phone: "",
-        referee_name: "",
-        refree_phone_no: "",
-        hospital_name: [],
-        hospital_ids: [],
-        medical_condition: "",
-        city: "",
-        age: "",
-        gender: "",
-        panel: "",
-        appointment_date: getTodayDate(),
-        appointment_time: getCurrentTime(),
-        current_disposition: "opd_booked",
+      
+      setSuccessData({
+        ref: res.data.data.booking_reference,
+        name: formData.patient_name
       });
-      setHospitals([]);
-      setSearchTerm("");
-      setAadharFile(null);
-      setPmjayFile(null);
-
-      const aadharInput = document.getElementById('aadhar-upload') as HTMLInputElement;
-      if (aadharInput) aadharInput.value = "";
-      const pmjayInput = document.getElementById('pmjay-upload') as HTMLInputElement;
-      if (pmjayInput) pmjayInput.value = "";
       
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
@@ -375,7 +376,47 @@ export default function BookOpdPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative">
+      
+      {/* --- SUCCESS MODAL --- */}
+      {successData && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-gray-800 border border-gray-600 p-8 rounded-2xl max-w-sm w-full text-center shadow-2xl transform scale-100 transition-all">
+            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-900/30 mb-6">
+              <svg className="h-10 w-10 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            
+            <h3 className="text-2xl font-bold text-white mb-2">Booking Confirmed!</h3>
+            <p className="text-gray-400 mb-6">Patient <span className="text-white font-medium">{successData.name}</span> has been successfully registered.</p>
+            
+            <div className="bg-gray-700/50 rounded-lg p-4 mb-6 border border-gray-600 border-dashed">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Booking Reference</p>
+              <p className="text-3xl font-mono font-bold text-cyan-400 select-all">{successData.ref}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                onClick={() => navigate('/')}
+                className="px-4 py-2 bg-transparent hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors font-medium cursor-pointer"
+              >
+                Go Home
+              </button>
+              <button 
+                onClick={() => {
+                  setSuccessData(null);
+                  resetForm();
+                }}
+                className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium rounded-lg shadow-lg transition-all cursor-pointer"
+              >
+                New Booking
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
@@ -402,7 +443,6 @@ export default function BookOpdPage() {
 
           <div className="px-6 pt-6">
             {error && <div className="mb-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200 text-sm">{error}</div>}
-            {success && <div className="mb-6 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">{success}</div>}
           </div>
 
           <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -508,7 +548,7 @@ export default function BookOpdPage() {
                           autoFocus
                         />
                         <div className="flex justify-between text-xs text-gray-400 px-1">
-                           <button type="button" onClick={handleSelectAll} className="hover:text-cyan-400">
+                           <button type="button" onClick={handleSelectAll} className="hover:text-cyan-400 cursor-pointer">
                              {filteredHospitals.every(h => formData.hospital_name.includes(h.hospital_name)) ? "Deselect All" : "Select All"}
                            </button>
                            <span>{filteredHospitals.length} results</span>

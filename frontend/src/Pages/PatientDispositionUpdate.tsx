@@ -20,7 +20,7 @@ const DISPOSITION_OPTIONS = [
   "UPCM File Rejected"
 ];
 
-// Interface for our dropdown items
+
 interface HospitalOption {
     name: string;
     id: string;
@@ -30,12 +30,14 @@ export default function PatientDispositionUpdate() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
 
-  // State
+
   const [bookingRef, setBookingRef] = useState("");
   const [isFetched, setIsFetched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  
+ 
+  const [successData, setSuccessData] = useState<{patientName: string, status: string} | null>(null);
 
   // Fetched Data
   const [patientDetails, setPatientDetails] = useState({
@@ -45,7 +47,7 @@ export default function PatientDispositionUpdate() {
   });
 
   // Form Data for Update
-  const [selectedHospitalId, setSelectedHospitalId] = useState(""); // Store ID, not Name
+  const [selectedHospitalId, setSelectedHospitalId] = useState(""); 
   const [newDisposition, setNewDisposition] = useState("");
   const [comments, setComments] = useState("");
   
@@ -60,7 +62,7 @@ export default function PatientDispositionUpdate() {
     }
     setLoading(true);
     setError("");
-    setSuccess("");
+    setSuccessData(null);
     setIsFetched(false);
     setHospitalsList([]); 
     setSelectedHospitalId("");
@@ -75,21 +77,18 @@ export default function PatientDispositionUpdate() {
         hospital_name: data.hospital_name || "N/A"
       });
 
-      // --- Parse names AND IDs ---
+
       if (data.hospital_name) {
           const names = data.hospital_name.split(',').map((h: string) => h.trim());
-          // IDs come as an array from the backend (ensure backend sends this!)
           const ids = data.hospital_ids || [];
 
-          // Map them together. 
           const combinedList = names.map((name: string, index: number) => ({
               name: name,
               id: ids[index] || "" 
-          })).filter((h: HospitalOption) => h.id !== ""); // Filter out ones without IDs
+          })).filter((h: HospitalOption) => h.id !== "");
 
           setHospitalsList(combinedList);
           
-          // Pre-select the first one by default if available
           if (combinedList.length > 0) {
               setSelectedHospitalId(combinedList[0].id);
           }
@@ -97,7 +96,6 @@ export default function PatientDispositionUpdate() {
 
       setNewDisposition(""); 
       setIsFetched(true);
-      setSuccess("Patient details fetched.");
 
     } catch (err) {
       if (axios.isAxiosError(err)) {
@@ -110,12 +108,23 @@ export default function PatientDispositionUpdate() {
     }
   };
 
+
+  const resetForm = () => {
+      setBookingRef("");
+      setIsFetched(false);
+      setComments("");
+      setNewDisposition("");
+      setPatientDetails({ patient_name: "", current_disposition: "", hospital_name: "" });
+      setHospitalsList([]);
+      setSelectedHospitalId("");
+  };
+
   // --- 3. Submit Update ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
-    setSuccess("");
+    setSuccessData(null);
 
     if (!newDisposition) {
         setError("Please select a new disposition.");
@@ -123,13 +132,12 @@ export default function PatientDispositionUpdate() {
         return;
     }
 
-    // Find the name corresponding to the selected ID to send both
     const selectedHospitalObj = hospitalsList.find(h => h.id === selectedHospitalId);
     
     const payload = {
       booking_reference: bookingRef,
       hospital_name: selectedHospitalObj ? selectedHospitalObj.name : null,
-      hospital_id: selectedHospitalId || null, // Send the ID
+      hospital_id: selectedHospitalId || null, 
       new_disposition: newDisposition, 
       comments: comments 
     };
@@ -137,19 +145,11 @@ export default function PatientDispositionUpdate() {
     try {
       await api.post("/patientLeads/update-disposition", payload);
       
-      setSuccess(`✅ Disposition updated & logged for ${patientDetails.patient_name}`);
-      
-      // Reset UI
-      setTimeout(() => {
-          setBookingRef("");
-          setIsFetched(false);
-          setComments("");
-          setNewDisposition("");
-          setSuccess("");
-          setPatientDetails({ patient_name: "", current_disposition: "", hospital_name: "" });
-          setHospitalsList([]);
-          setSelectedHospitalId("");
-      }, 3000);
+      // Trigger Success Modal
+      setSuccessData({
+          patientName: patientDetails.patient_name,
+          status: newDisposition
+      });
 
     } catch (err) {
       if (axios.isAxiosError(err)) {
@@ -167,7 +167,44 @@ export default function PatientDispositionUpdate() {
   const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative">
+      
+
+      {successData && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-gray-800 border border-gray-600 p-8 rounded-2xl max-w-sm w-full text-center shadow-2xl transform scale-100 transition-all">
+            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-purple-900/30 mb-6">
+              <svg className="h-10 w-10 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            
+            <h3 className="text-2xl font-bold text-white mb-2">Update Successful!</h3>
+            <p className="text-gray-400 mb-6">
+                Status for <span className="text-white font-medium">{successData.patientName}</span> changed to <span className="text-purple-400 font-medium">{successData.status}</span>.
+            </p>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                onClick={() => navigate('/')}
+                className="px-4 py-2 bg-transparent hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors font-medium cursor-pointer"
+              >
+                Go Home
+              </button>
+              <button 
+                onClick={() => {
+                  setSuccessData(null);
+                  resetForm();
+                }}
+                className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium rounded-lg shadow-lg transition-all cursor-pointer"
+              >
+                Update Next
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
@@ -199,7 +236,6 @@ export default function PatientDispositionUpdate() {
 
           <div className="px-6 pt-6">
             {error && <div className="mb-2 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200 text-sm animate-shake">{error}</div>}
-            {success && <div className="mb-2 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">{success}</div>}
           </div>
 
           <div className="p-6 space-y-6">
@@ -221,7 +257,7 @@ export default function PatientDispositionUpdate() {
                       type="button"
                       onClick={handleFetchPatient}
                       disabled={loading || isFetched}
-                      className="h-[46px] px-6 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 disabled:opacity-50"
+                      className="h-[46px] px-6 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 disabled:opacity-50 cursor-pointer"
                     >
                       {loading ? "..." : "Fetch"}
                     </button>
@@ -298,7 +334,7 @@ export default function PatientDispositionUpdate() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="flex-1 py-3 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 disabled:opacity-50"
+                    className="flex-1 py-3 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 disabled:opacity-50 cursor-pointer"
                   >
                     {loading ? "Updating..." : "Submit Update"}
                   </button>
@@ -311,7 +347,7 @@ export default function PatientDispositionUpdate() {
                       setHospitalsList([]);
                       setSelectedHospitalId("");
                     }}
-                    className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold rounded-lg transition-colors"
+                    className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold rounded-lg transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>

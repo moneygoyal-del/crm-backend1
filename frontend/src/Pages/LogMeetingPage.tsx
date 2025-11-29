@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import axios from 'axios';
 
-// --- FIX: Use local system time instead of UTC ---
+
 const getTodayDate = () => {
     const now = new Date();
     const year = now.getFullYear();
@@ -50,7 +50,9 @@ export default function LogMeetingPage() {
     // --- 3. State for form submission and UI ---
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [success, setSuccess] = useState('');
+    
+
+    const [successData, setSuccessData] = useState<{doctorName: string} | null>(null);
 
     // --- 4. State for doctor auto-fill ---
     const [isFetchingDoctor, setIsFetchingDoctor] = useState(false);
@@ -159,12 +161,29 @@ export default function LogMeetingPage() {
         }
     };
 
+    // Helper: Reset Form
+    const resetForm = () => {
+        setFormData({
+            doctor_name: '', doctor_phone_number: '', locality: '',
+            opd_count: '', duration_of_meeting: '15', numPatientsDuringMeeting: '0',
+            rating: '3', queries_by_the_doctor: '', comments_by_ndm: '',
+            chances_of_getting_leads: 'medium', facilities: [],
+            timestamp_of_the_meeting: getTodayDate() 
+        });
+        
+        handleFileRemove('clinic');
+        handleFileRemove('selfie');
+        
+        setIsDoctorFound(false);
+        setDoctorError('');
+    };
+
     // --- 9. Form submit handler ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError('');
-        setSuccess('');
+        setSuccessData(null);
 
         if (!formData.doctor_name || !formData.doctor_phone_number) {
             setError("Doctor Name and Phone are required.");
@@ -221,23 +240,10 @@ export default function LogMeetingPage() {
                 }
             });
 
-            setSuccess(`✅ Success! Meeting with Dr. ${response.data.data.doctor_name} logged.`);
-            
-            setFormData({
-                doctor_name: '', doctor_phone_number: '', locality: '',
-                opd_count: '', duration_of_meeting: '15', numPatientsDuringMeeting: '0',
-                rating: '3', queries_by_the_doctor: '', comments_by_ndm: '',
-                chances_of_getting_leads: 'medium', facilities: [],
-                timestamp_of_the_meeting: getTodayDate() 
+ 
+            setSuccessData({
+                doctorName: response.data.data.doctor_name
             });
-            
-            handleFileRemove('clinic');
-            handleFileRemove('selfie');
-            
-            setIsDoctorFound(false);
-            setDoctorError('');
-            
-            setTimeout(() => setSuccess(''), 5000);
 
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
@@ -249,14 +255,50 @@ export default function LogMeetingPage() {
         setLoading(false);
     };
 
-    // --- 10. JSX ---
     const inputStyles = "w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
     const selectStyles = "w-full px-2 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"; 
     const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
     const fileInputStyles = "w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500/20 file:text-blue-300 hover:file:bg-blue-500/30 disabled:opacity-50";
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+        <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative">
+            
+            {/* --- SUCCESS MODAL --- */}
+            {successData && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-[fadeIn_0.2s_ease-out]">
+                    <div className="bg-gray-800 border border-gray-600 p-8 rounded-2xl max-w-sm w-full text-center shadow-2xl transform scale-100 transition-all">
+                        <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-blue-900/30 mb-6">
+                            <svg className="h-10 w-10 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
+                        
+                        <h3 className="text-2xl font-bold text-white mb-2">Meeting Logged!</h3>
+                        <p className="text-gray-400 mb-6">
+                            Meeting with <span className="text-white font-medium">{successData.doctorName}</span> has been successfully recorded.
+                        </p>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                            <button 
+                                onClick={() => navigate('/')}
+                                className="px-4 py-2 bg-transparent hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors font-medium cursor-pointer"
+                            >
+                                Go Home
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    setSuccessData(null);
+                                    resetForm();
+                                }}
+                                className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-medium rounded-lg shadow-lg transition-all cursor-pointer"
+                            >
+                                Log Another
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -285,10 +327,8 @@ export default function LogMeetingPage() {
                     {/* Page Header */}
                     <div className="bg-gradient-to-r from-blue-500 to-purple-500 px-3 py-6">
                         <div className="flex items-center space-x-3">
-                            
                             <div>
                                 <h1 className="text-2xl font-bold text-white">Log Doctor Meeting</h1>
-
                             </div>
                         </div>
                     </div>
@@ -300,14 +340,6 @@ export default function LogMeetingPage() {
                                 <div className="flex items-center">
                                     <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
                                     {error}
-                                </div>
-                            </div>
-                        )}
-                        {success && (
-                            <div className="mb-6 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">
-                                <div className="flex items-center">
-                                    <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                                    {success}
                                 </div>
                             </div>
                         )}

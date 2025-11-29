@@ -11,7 +11,9 @@ export default function UpdatePhonePage() {
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  
+
+  const [successData, setSuccessData] = useState<{ref: string, phone: string} | null>(null);
   
   const user = JSON.parse(localStorage.getItem("user") || '{"name":"User"}');
   const [isFetched, setIsFetched] = useState(false);
@@ -24,15 +26,13 @@ export default function UpdatePhonePage() {
     }
     setLoading(true);
     setError("");
-    setSuccess("");
+    setSuccessData(null);
     setIsFetched(false);
     
     try {
-      // We will create this new endpoint in the backend
       const res = await api.get(`/patientLeads/get-phone/${bookingRef}`);
       setCurrentPhone(res.data.data.patient_phone);
       setIsFetched(true);
-      setSuccess(`Fetched patient. Current phone: ${res.data.data.patient_phone}`);
     } catch (err) {
       if (axios.isAxiosError(err)) {
         setError(err.response?.data?.message || "Patient not found.");
@@ -42,6 +42,15 @@ export default function UpdatePhonePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Helper: Reset Form
+  const resetForm = () => {
+      setIsFetched(false);
+      setCurrentPhone("");
+      setNewPhone("");
+      setBookingRef("");
+      setSuccessData(null);
   };
 
   // --- 2. Submit the new phone number ---
@@ -54,7 +63,7 @@ export default function UpdatePhonePage() {
     
     setLoading(true);
     setError("");
-    setSuccess("");
+    setSuccessData(null);
     
     const payload = {
       booking_reference: bookingRef,
@@ -62,15 +71,13 @@ export default function UpdatePhonePage() {
     };
 
     try {
-      // Use the existing update endpoint
-      const res = await api.put("/patientLeads/update", payload);
-      setSuccess(`✅ Phone number updated successfully for ${res.data.data.booking_reference}.`);
+      await api.put("/patientLeads/update", payload);
       
-      // Reset the form
-      setIsFetched(false);
-      setCurrentPhone("");
-      setNewPhone("");
-      setBookingRef("");
+     
+      setSuccessData({
+          ref: bookingRef, 
+          phone: newPhone
+      });
       
     } catch (err) {
       if (axios.isAxiosError(err)) {
@@ -87,7 +94,41 @@ export default function UpdatePhonePage() {
   const labelStyles = "block text-sm font-medium text-gray-300 mb-2";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative">
+      
+      
+      {successData && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-gray-800 border border-gray-600 p-8 rounded-2xl max-w-sm w-full text-center shadow-2xl transform scale-100 transition-all">
+            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-yellow-900/30 mb-6">
+              <svg className="h-10 w-10 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+            </div>
+            
+            <h3 className="text-2xl font-bold text-white mb-2">Phone Updated!</h3>
+            <p className="text-gray-400 mb-6">
+                Contact number for <span className="text-white font-mono font-bold">{successData.ref}</span> changed to <span className="text-yellow-400 font-bold">{successData.phone}</span>.
+            </p>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                onClick={() => navigate('/')}
+                className="px-4 py-2 bg-transparent hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors font-medium cursor-pointer"
+              >
+                Go Home
+              </button>
+              <button 
+                onClick={resetForm}
+                className="px-4 py-2 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white font-medium rounded-lg shadow-lg transition-all cursor-pointer"
+              >
+                Next Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -135,19 +176,11 @@ export default function UpdatePhonePage() {
                     </div>
                 </div>
             )}
-            {success && (
-                <div className="mb-2 p-4 bg-green-900/50 border border-green-500 rounded-lg text-green-200 text-sm">
-                    <div className="flex items-center">
-                        <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                        {success}
-                    </div>
-                </div>
-            )}
           </div>
 
           <form onSubmit={handleSubmit} className="p-6 space-y-6">
             
-            {/* Step 1: Fetch Form */}
+      
             <div className="space-y-4">
                           
               <div className="flex gap-4">
@@ -167,7 +200,7 @@ export default function UpdatePhonePage() {
                       type="button"
                       onClick={handleFetchPatient}
                       disabled={loading || isFetched}
-                      className="h-[46px] px-6 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="h-[46px] px-6 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                     >
                       {loading ? (
                          <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -180,7 +213,7 @@ export default function UpdatePhonePage() {
               </div>
             </div>
 
-            {/* Step 2: Update Form (shows after fetch) */}
+          
             {isFetched && (
               <div className="space-y-6 pt-6 border-t border-gray-700 animate-fade-in">
                 <h3 className={labelStyles.replace('mb-2', '') + " text-lg font-semibold text-white flex items-center"}>
@@ -215,7 +248,7 @@ export default function UpdatePhonePage() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="flex-1 py-3 px-4 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                    className="flex-1 py-3 px-4 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none cursor-pointer"
                   >
                     {loading ? "Updating..." : "Submit Update"}
                   </button>
@@ -227,9 +260,8 @@ export default function UpdatePhonePage() {
                       setCurrentPhone("");
                       setNewPhone("");
                       setError("");
-                      setSuccess("");
                     }}
-                    className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold rounded-lg transition-colors"
+                    className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold rounded-lg transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
